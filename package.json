@@ -1,0 +1,14 @@
+{
+  "name": "pi-chat-poc",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "esbuild main.ts --bundle --external:obsidian --external:electron --format=cjs --outfile=main.js --platform=node",
+    "dev": "esbuild main.ts --bundle --external:obsidian --external:electron --format=cjs --outfile=main.js --platform=node --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "obsidian": "^1.7.2",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "pi-chat-poc",
+  "name": "Pi Chat (POC)",
+  "version": "0.0.1",
+  "minAppVersion": "1.0.0",
+  "description": "Smoke test: Obsidian sidebar that talks to pi via RPC.",
+  "author": "Educator Agency",
+  "isDesktopOnly": true
+}
