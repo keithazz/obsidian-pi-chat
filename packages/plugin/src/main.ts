@@ -19,6 +19,7 @@ import {
 
 const VIEW_TYPE = "pi-chat-view";
 const VIEW_TYPE_PROPOSAL = "pi-chat-proposal-view";
+const VIEW_TYPE_EDIT_DIFF = "pi-chat-edit-diff-view";
 const PROPOSAL_REF_PREFIX = "AGENCY::proposal-ref::";
 const PROPOSAL_STASH_TTL_MS = 5 * 60 * 1000; // 5 minutes (task §Notes)
 
@@ -42,6 +43,10 @@ interface SessionEdit {
   path: string;
   summary: string;
   timestamp: number;
+  // Optional snapshot for the post-hoc read-only diff view. Absent when the
+  // file was too large for the extension to ship over the notify channel.
+  before?: string;
+  after?: string;
 }
 
 // ─── Chat View ───────────────────────────────────────────────────────────────
@@ -763,6 +768,8 @@ class PiChatView extends ItemView {
           path: msg.path,
           summary: msg.summary,
           timestamp: Date.now(),
+          before: msg.before,
+          after: msg.after,
         });
         break;
       default:
@@ -786,9 +793,14 @@ class PiChatView extends ItemView {
   }
 
   private renderActivityCard(edit: SessionEdit): void {
+    const hasSnapshot = edit.before !== undefined && edit.after !== undefined;
+    const tooltip = hasSnapshot
+      ? `Show diff for ${edit.path}`
+      : `Open ${edit.path} (snapshot too large to diff)`;
+
     const card = this.messagesEl.createDiv({
       cls: "pi-chat-msg pi-chat-activity-card",
-      attr: { "data-edit-id": edit.editId, title: `Open ${edit.path}` },
+      attr: { "data-edit-id": edit.editId, title: tooltip },
     });
 
     card.createSpan({ cls: "pi-chat-activity-icon", text: "✎" });
@@ -803,15 +815,32 @@ class PiChatView extends ItemView {
     card.createSpan({ cls: "pi-chat-activity-summary", text: edit.summary });
 
     card.addEventListener("click", () => {
-      // Phase-1 stub: open in Obsidian's normal editor. A proper read-only
-      // diff view is future work once history persistence and snapshots exist.
-      this.app.workspace.openLinkText(edit.path, "", false).catch((err) => {
+      this.openEditDiff(edit).catch((err) => {
         console.warn("[pi-chat] failed to open activity-card target:", err);
         new Notice(`Could not open ${edit.path}`);
       });
     });
 
     this.scroll();
+  }
+
+  private async openEditDiff(edit: SessionEdit): Promise<void> {
+    if (edit.before === undefined || edit.after === undefined) {
+      // Snapshot wasn't shipped (e.g. file too large) — fall back to opening
+      // the file in Obsidian's normal editor.
+      await this.app.workspace.openLinkText(edit.path, "", false);
+      return;
+    }
+
+    const { workspace } = this.app;
+    const leaf = workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_EDIT_DIFF, active: true });
+    workspace.revealLeaf(leaf);
+
+    const view = leaf.view;
+    if (view instanceof EditDiffView) {
+      view.initialize(edit);
+    }
   }
 
   // ─── Mode switching ──────────────────────────────────────────────────────
@@ -1233,6 +1262,83 @@ class ProposalView extends ItemView {
   }
 }
 
+// ─── Read-only edit-diff pane (task 08) ──────────────────────────────────────
+//
+// Renders a side-by-side MergeView of `before`/`after` for an already-applied
+// edit. Both sides are read-only — this is informational, not interactive. The
+// activity card click in the chat stream opens one of these.
+
+class EditDiffView extends ItemView {
+  private edit: SessionEdit | null = null;
+  private mergeView: MergeView | null = null;
+  private mergeContainerEl: HTMLElement | null = null;
+
+  getViewType(): string { return VIEW_TYPE_EDIT_DIFF; }
+  getDisplayText(): string {
+    if (!this.edit) return "Edit diff";
+    return `${this.edit.operation} ${this.edit.path}`;
+  }
+  getIcon(): string { return "git-compare"; }
+
+  async onClose(): Promise<void> {
+    this.mergeView?.destroy();
+    this.mergeView = null;
+  }
+
+  initialize(edit: SessionEdit): void {
+    if (edit.before === undefined || edit.after === undefined) {
+      // Defensive: caller should have already filtered, but bail gracefully.
+      return;
+    }
+    this.edit = edit;
+
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("pi-chat-proposal-pane");
+
+    const header = contentEl.createDiv({ cls: "pi-chat-proposal-pane-header" });
+    const titleRow = header.createDiv({ cls: "pi-chat-proposal-pane-title-row" });
+    titleRow.createSpan({ cls: "pi-chat-proposal-pane-path", text: edit.path });
+    titleRow.createSpan({
+      cls: `pi-chat-proposal-pane-badge pi-chat-proposal-pane-badge-${edit.operation}`,
+      text: edit.operation,
+    });
+    titleRow.createSpan({
+      cls: "pi-chat-proposal-pane-skill",
+      text: `skill: ${edit.skill || "agent"} · ${new Date(edit.timestamp).toLocaleTimeString()}`,
+    });
+
+    const summaryBar = contentEl.createDiv({ cls: "pi-chat-edit-diff-summary" });
+    summaryBar.setText(`${edit.summary} — read-only (already applied)`);
+
+    const bodyEl = contentEl.createDiv({ cls: "pi-chat-proposal-pane-body" });
+    this.mergeContainerEl = bodyEl.createDiv({ cls: "pi-chat-proposal-pane-merge" });
+    this.mountMergeView(edit.before, edit.after);
+  }
+
+  private mountMergeView(before: string, after: string): void {
+    if (!this.mergeContainerEl) return;
+
+    const readOnlyExtensions = [
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+      lineNumbers(),
+      markdown(),
+    ];
+
+    this.mergeView = new MergeView({
+      parent: this.mergeContainerEl,
+      orientation: "a-b",
+      highlightChanges: true,
+      gutter: true,
+      collapseUnchanged: { margin: 3, minSize: 4 },
+      a: { doc: before, extensions: readOnlyExtensions },
+      b: { doc: after, extensions: readOnlyExtensions },
+    });
+  }
+}
+
 // ─── Session edit-log modal (task 08) ────────────────────────────────────────
 
 class SessionEditLogModal extends Modal {
@@ -1288,6 +1394,7 @@ export default class PiChatPlugin extends Plugin {
   async onload(): Promise<void> {
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new PiChatView(leaf, this));
     this.registerView(VIEW_TYPE_PROPOSAL, (leaf: WorkspaceLeaf) => new ProposalView(leaf));
+    this.registerView(VIEW_TYPE_EDIT_DIFF, (leaf: WorkspaceLeaf) => new EditDiffView(leaf));
     this.addCommand({
       id: "open-pi-chat",
       name: "Open Pi Chat",

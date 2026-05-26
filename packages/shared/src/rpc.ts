@@ -19,7 +19,11 @@ export type ExtensionToPluginMessage =
       skill: string; turnId: string }
   | { kind: "edit-made"; editId: string; turnId: string; skill: string;
       operation: "create" | "modify" | "delete" | "rename";
-      path: string; summary: string };
+      path: string; summary: string;
+      // Optional in-memory snapshot for the post-hoc diff view (task 08).
+      // Omitted when the file is too large to ship over the notify channel;
+      // the activity card then falls back to opening the file directly.
+      before?: string; after?: string };
 
 // Plugin → extension (slash commands; this is the union of payloads carried by them)
 export type PluginToExtensionCommand =

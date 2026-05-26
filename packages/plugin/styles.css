@@ -397,6 +397,16 @@ details[open] .pi-chat-trace-summary::before {
   padding-left: 8px;
 }
 
+/* Read-only edit-diff pane summary bar (task 08) */
+.pi-chat-edit-diff-summary {
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-style: italic;
+}
+
 /* Session edit log modal (task 08) */
 .pi-chat-edit-log-modal h3 {
   margin: 0 0 10px;

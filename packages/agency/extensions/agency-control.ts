@@ -339,6 +339,13 @@ export default function (pi: ExtensionAPI) {
           : "create"
         : "modify";
 
+    // Ship the pre/post snapshot for the plugin's post-hoc diff view, but only
+    // for reasonably-sized files — large notifies bloat the RPC stream and the
+    // MergeView UX degrades anyway. Above the cap, the activity card falls back
+    // to opening the file directly.
+    const SNAPSHOT_BYTE_CAP = 200_000;
+    const includeSnapshot = pending.before.length + after.length <= SNAPSHOT_BYTE_CAP;
+
     ctx.ui.notify(
       encodeExtensionMessage({
         kind: "edit-made",
@@ -348,6 +355,7 @@ export default function (pi: ExtensionAPI) {
         operation,
         path: pending.path,
         summary: summariseChange(pending.before, after),
+        ...(includeSnapshot ? { before: pending.before, after } : {}),
       }),
       "info",
     );
