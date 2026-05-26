@@ -17,6 +17,8 @@ class PiChatView extends ItemView {
 
   // Streaming state — accumulate tokens into the current assistant bubble
   private currentAssistantEl: HTMLElement | null = null;
+  private currentThinkingEl: HTMLElement | null = null;
+  private currentToolCallArgsEl: HTMLElement | null = null;
 
   getViewType(): string {
     return VIEW_TYPE;
@@ -174,23 +176,56 @@ class PiChatView extends ItemView {
     // ── Pi's streaming wrapper ──────────────────────────────────────────
     if (type === "message_update") {
       const ae = msg.assistantMessageEvent;
+
       if (ae?.type === "text_delta" && typeof ae.delta === "string") {
         this.appendAssistantText(ae.delta);
+        return;
       }
-      return;
-    }
 
-    // ── Tool usage narration ────────────────────────────────────────────
-    if (type === "tool_call" || type === "tool_use" || type === "tool_result") {
-      const name = msg.toolName ?? msg.tool ?? msg.name ?? "tool";
-      const status = type === "tool_result" ? "✓" : "…";
-      this.addSystemMessage(`🔧 ${name} ${status}`);
+      if (ae?.type === "thinking_start") {
+        this.startThinkingTrace();
+        return;
+      }
+
+      if (ae?.type === "thinking_delta" && typeof ae.delta === "string") {
+        this.appendThinkingText(ae.delta);
+        return;
+      }
+
+      if (ae?.type === "thinking_end") {
+        this.endThinkingTrace(ae.content ?? "");
+        return;
+      }
+
+      if (ae?.type === "toolcall_start") {
+        const toolContent = ae.partial?.content?.[ae.contentIndex];
+        const toolName = toolContent?.name ?? "tool";
+        this.startToolCallTrace(toolName);
+        return;
+      }
+
+      if (ae?.type === "toolcall_delta") {
+        this.appendToolCallArgs(ae.delta ?? "");
+        return;
+      }
+
+      if (ae?.type === "toolcall_end") {
+        if (this.currentToolCallArgsEl) {
+          const details = this.currentToolCallArgsEl.closest("details");
+          if (details) details.removeAttribute("open");
+        }
+        this.currentToolCallArgsEl = null;
+        return;
+      }
+
       return;
     }
 
     // ── Turn complete ───────────────────────────────────────────────────
     if (type === "turn_end" || type === "agent_end" || type === "done") {
       this.currentAssistantEl = null;
+      this.currentThinkingEl = null;
+      this.currentToolCallArgsEl = null;
       return;
     }
 
@@ -237,6 +272,8 @@ class PiChatView extends ItemView {
     this.inputEl.value = "";
     this.addUserMessage(text);
     this.currentAssistantEl = null;
+    this.currentThinkingEl = null;
+    this.currentToolCallArgsEl = null;
 
     const payload = JSON.stringify({
       type: "prompt",
@@ -267,6 +304,53 @@ class PiChatView extends ItemView {
     // Append text; use textContent for safety (no HTML injection).
     this.currentAssistantEl.textContent += text;
     this.scroll();
+  }
+
+  private startThinkingTrace(): void {
+    const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-trace pi-chat-thinking" });
+    const details = row.createEl("details", { cls: "pi-chat-trace-details" });
+    details.setAttribute("open", "");
+    details.createEl("summary", { cls: "pi-chat-trace-summary", text: "Thinking…" });
+    this.currentThinkingEl = details.createDiv({ cls: "pi-chat-trace-content" });
+    this.scroll();
+  }
+
+  private appendThinkingText(delta: string): void {
+    if (this.currentThinkingEl) {
+      this.currentThinkingEl.textContent = (this.currentThinkingEl.textContent ?? "") + delta;
+      this.scroll();
+    }
+  }
+
+  private endThinkingTrace(content: string): void {
+    if (this.currentThinkingEl) {
+      const hasAccumulated = !!this.currentThinkingEl.textContent?.trim();
+      if (!hasAccumulated) {
+        this.currentThinkingEl.setText(content || "(encrypted reasoning)");
+      }
+      const details = this.currentThinkingEl.closest("details");
+      if (details) details.removeAttribute("open");
+    }
+    this.currentThinkingEl = null;
+    this.scroll();
+  }
+
+  private startToolCallTrace(toolName: string): void {
+    const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-trace pi-chat-toolcall" });
+    const details = row.createEl("details", { cls: "pi-chat-trace-details" });
+    details.setAttribute("open", "");
+    const summary = details.createEl("summary", { cls: "pi-chat-trace-summary" });
+    summary.createSpan({ text: "🔧 " });
+    summary.createSpan({ cls: "pi-chat-trace-tool-name", text: toolName });
+    this.currentToolCallArgsEl = details.createDiv({ cls: "pi-chat-trace-args" });
+    this.scroll();
+  }
+
+  private appendToolCallArgs(delta: string): void {
+    if (this.currentToolCallArgsEl) {
+      this.currentToolCallArgsEl.textContent = (this.currentToolCallArgsEl.textContent ?? "") + delta;
+      this.scroll();
+    }
   }
 
   private addSystemMessage(text: string): void {
