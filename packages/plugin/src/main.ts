@@ -1,4 +1,4 @@
-import { Plugin, ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
+import { Plugin, ItemView, WorkspaceLeaf, Notice, Modal, setIcon } from "obsidian";
 import { ChildProcess, spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
@@ -34,6 +34,16 @@ interface StashedProposal {
   receivedAt: number;
 }
 
+interface SessionEdit {
+  editId: string;
+  turnId: string;
+  skill: string;
+  operation: "create" | "modify" | "delete" | "rename";
+  path: string;
+  summary: string;
+  timestamp: number;
+}
+
 // ─── Chat View ───────────────────────────────────────────────────────────────
 
 class PiChatView extends ItemView {
@@ -54,6 +64,11 @@ class PiChatView extends ItemView {
   // memory if the extension stages but never follows up with an editor request.
   private proposalStash = new Map<string, StashedProposal>();
   private stashSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+  // In-memory log of accepted edits for this session (task 08). Surfaced via the
+  // "Pi Chat: Show session edit log" command palette entry. No persistence —
+  // that lands with the history work item.
+  private sessionEditLog: SessionEdit[] = [];
 
   // DOM refs
   private messagesEl!: HTMLElement;
@@ -740,6 +755,15 @@ class PiChatView extends ItemView {
         break;
       case "edit-made":
         console.log(`[pi-chat] edit made: ${msg.editId}`);
+        this.recordEditMade({
+          editId: msg.editId,
+          turnId: msg.turnId,
+          skill: msg.skill,
+          operation: msg.operation,
+          path: msg.path,
+          summary: msg.summary,
+          timestamp: Date.now(),
+        });
         break;
       default:
         console.log("[pi-chat] unknown control message kind:", (msg as any).kind);
@@ -748,6 +772,46 @@ class PiChatView extends ItemView {
 
   private sendControl(cmd: PluginToExtensionCommand): void {
     this.sendRpc({ type: "prompt", id: `ctrl-${++this.msgId}`, message: formatSlashCommand(cmd) });
+  }
+
+  // ─── Activity feed (task 08) ─────────────────────────────────────────────
+
+  getSessionEditLog(): ReadonlyArray<SessionEdit> {
+    return this.sessionEditLog;
+  }
+
+  private recordEditMade(edit: SessionEdit): void {
+    this.sessionEditLog.push(edit);
+    this.renderActivityCard(edit);
+  }
+
+  private renderActivityCard(edit: SessionEdit): void {
+    const card = this.messagesEl.createDiv({
+      cls: "pi-chat-msg pi-chat-activity-card",
+      attr: { "data-edit-id": edit.editId, title: `Open ${edit.path}` },
+    });
+
+    card.createSpan({ cls: "pi-chat-activity-icon", text: "✎" });
+    card.createSpan({ cls: "pi-chat-activity-skill", text: edit.skill });
+    card.createSpan({ cls: "pi-chat-activity-sep", text: " · " });
+    card.createSpan({
+      cls: `pi-chat-activity-operation pi-chat-activity-operation-${edit.operation}`,
+      text: edit.operation,
+    });
+    card.createSpan({ cls: "pi-chat-activity-path", text: ` ${edit.path}` });
+    card.createSpan({ cls: "pi-chat-activity-sep", text: " · " });
+    card.createSpan({ cls: "pi-chat-activity-summary", text: edit.summary });
+
+    card.addEventListener("click", () => {
+      // Phase-1 stub: open in Obsidian's normal editor. A proper read-only
+      // diff view is future work once history persistence and snapshots exist.
+      this.app.workspace.openLinkText(edit.path, "", false).catch((err) => {
+        console.warn("[pi-chat] failed to open activity-card target:", err);
+        new Notice(`Could not open ${edit.path}`);
+      });
+    });
+
+    this.scroll();
   }
 
   // ─── Mode switching ──────────────────────────────────────────────────────
@@ -1169,6 +1233,49 @@ class ProposalView extends ItemView {
   }
 }
 
+// ─── Session edit-log modal (task 08) ────────────────────────────────────────
+
+class SessionEditLogModal extends Modal {
+  private edits: ReadonlyArray<SessionEdit>;
+
+  constructor(plugin: PiChatPlugin, edits: ReadonlyArray<SessionEdit>) {
+    super(plugin.app);
+    this.edits = edits;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("pi-chat-edit-log-modal");
+    contentEl.createEl("h3", { text: "Pi Chat — session edit log" });
+
+    if (this.edits.length === 0) {
+      contentEl.createDiv({
+        cls: "pi-chat-edit-log-empty",
+        text: "No edits recorded in this session yet.",
+      });
+      return;
+    }
+
+    const list = contentEl.createDiv({ cls: "pi-chat-edit-log-list" });
+    for (const e of this.edits) {
+      const row = list.createDiv({ cls: "pi-chat-edit-log-row" });
+      const time = new Date(e.timestamp).toLocaleTimeString();
+      row.createSpan({ cls: "pi-chat-edit-log-time", text: time });
+      row.createSpan({
+        cls: `pi-chat-edit-log-op pi-chat-activity-operation-${e.operation}`,
+        text: e.operation,
+      });
+      row.createSpan({ cls: "pi-chat-edit-log-path", text: e.path });
+      row.createSpan({ cls: "pi-chat-edit-log-summary", text: e.summary });
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 // ─── Plugin entry point ──────────────────────────────────────────────────────
 
 interface PiChatPluginData {
@@ -1202,6 +1309,19 @@ export default class PiChatPlugin extends Plugin {
         },
       });
     }
+
+    this.addCommand({
+      id: "pi-chat-show-session-edit-log",
+      name: "Pi Chat: Show session edit log",
+      callback: () => {
+        const view = this.getView();
+        if (!view) {
+          new Notice("Pi Chat is not open.");
+          return;
+        }
+        new SessionEditLogModal(this, view.getSessionEditLog()).open();
+      },
+    });
   }
 
   async getDefaultMode(): Promise<AutonomyMode> {

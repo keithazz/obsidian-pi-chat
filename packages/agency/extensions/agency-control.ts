@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
-import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import {
   encodeExtensionMessage,
   parseSlashArgs,
@@ -175,6 +175,27 @@ function buildProposalForEdit(
   return null;
 }
 
+function summariseChange(before: string, after: string): string {
+  // Intentionally lightweight (task 08). Reports net line delta against the
+  // on-disk pre-image observed at tool_call time, not the proposal stage-time
+  // before (which could be stale if the user edited under Obsidian).
+  if (before.length + after.length > 200_000) {
+    return `${before.length} → ${after.length} bytes`;
+  }
+  const beforeLineCount = before === "" ? 0 : before.split("\n").length;
+  const afterLineCount = after === "" ? 0 : after.split("\n").length;
+  const delta = afterLineCount - beforeLineCount;
+  if (delta > 0) return `+${delta} lines`;
+  if (delta < 0) return `−${Math.abs(delta)} lines`;
+  return `${afterLineCount} lines`;
+}
+
+interface PendingEdit {
+  path: string;
+  existedBefore: boolean;
+  before: string;
+}
+
 function applyAcceptedContent(event: ToolCallEvent, before: string, decided: string): void {
   if (event.toolName === "edit") {
     // Convert any number of edits into a synthetic single full-content edit so the
@@ -193,8 +214,13 @@ export default function (pi: ExtensionAPI) {
   let mode: AutonomyMode = "step-by-step";
   let lastRejection: { requestId: string; reason: string } | null = null;
 
+  // Captures the pre-write file state per toolCallId so the tool_result handler
+  // can compute the operation kind (create vs modify) and a change summary.
+  const pendingEdits = new Map<string, PendingEdit>();
+
   pi.on("session_start", async (_event, ctx) => {
     mode = "step-by-step";
+    pendingEdits.clear();
     ctx.ui.notify(
       encodeExtensionMessage({ kind: "loaded", protocolVersion: AGENCY_PROTOCOL_VERSION }),
       "info",
@@ -202,6 +228,18 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "edit" || event.toolName === "write") {
+      const input = event.input as { path?: string };
+      if (input.path) {
+        const abs = resolveAbsolute(ctx.cwd, input.path);
+        pendingEdits.set(event.toolCallId, {
+          path: input.path,
+          existedBefore: existsSync(abs),
+          before: readFileOrEmpty(abs),
+        });
+      }
+    }
+
     const klass = classifyTool({
       toolName: event.toolName,
       input: event.input as Record<string, unknown>,
@@ -211,12 +249,17 @@ export default function (pi: ExtensionAPI) {
     const decision = decide(klass, mode, event);
     console.log("[agency-control] tool_call", event.toolName, "→", klass, "→", decision);
 
+    // pendingEdits is consumed by `tool_result`. Blocked tool calls never reach
+    // `tool_result`, so drop the entry now to keep the map bounded.
+    const dropPending = () => pendingEdits.delete(event.toolCallId);
+
     if (decision === "allow") return undefined;
-    if (decision === "deny") return { block: true, reason: "Denied by policy" };
+    if (decision === "deny") { dropPending(); return { block: true, reason: "Denied by policy" }; }
 
     // decision === "ask"
     if (!ctx.hasUI) {
       // Fail closed in headless / print mode — no UI to prompt.
+      dropPending();
       return { block: true, reason: "No UI available to confirm" };
     }
 
@@ -226,6 +269,7 @@ export default function (pi: ExtensionAPI) {
     if (klass === "edit" || klass === "create") {
       const proposal = buildProposalForEdit(event, ctx.cwd);
       if (!proposal) {
+        dropPending();
         return { block: true, reason: "Could not stage proposal (missing path)" };
       }
 
@@ -254,6 +298,7 @@ export default function (pi: ExtensionAPI) {
       );
 
       if (decided === undefined) {
+        dropPending();
         const reason = lastRejection?.reason ?? "Rejected by user";
         lastRejection = null;
         return { block: true, reason };
@@ -269,11 +314,43 @@ export default function (pi: ExtensionAPI) {
 
     const ok = await ctx.ui.confirm(title, message);
     if (!ok) {
+      dropPending();
       const reason = lastRejection?.reason ?? "Rejected by user";
       lastRejection = null;
       return { block: true, reason };
     }
     return undefined;
+  });
+
+  pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
+    const pending = pendingEdits.get(event.toolCallId);
+    pendingEdits.delete(event.toolCallId);
+
+    if (event.isError) return;
+    if (event.toolName !== "edit" && event.toolName !== "write") return;
+    if (!pending) return;
+
+    const abs = resolveAbsolute(ctx.cwd, pending.path);
+    const after = readFileOrEmpty(abs);
+    const operation: "create" | "modify" =
+      event.toolName === "write"
+        ? pending.existedBefore
+          ? "modify"
+          : "create"
+        : "modify";
+
+    ctx.ui.notify(
+      encodeExtensionMessage({
+        kind: "edit-made",
+        editId: randomUUID(),
+        turnId: ctx.sessionManager.getLeafId() ?? "",
+        skill: "agent", // D8: Phase 1 has no skills installed.
+        operation,
+        path: pending.path,
+        summary: summariseChange(pending.before, after),
+      }),
+      "info",
+    );
   });
 
   pi.registerCommand("agency-set-mode", {

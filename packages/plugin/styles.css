@@ -331,6 +331,134 @@ details[open] .pi-chat-trace-summary::before {
   color: var(--text-error, #e53935);
 }
 
+/* Activity cards (task 08) — one-line post-execution notifications.
+   Informational, not blocking. More compact than proposal cards. */
+.pi-chat-activity-card {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  border-left: 2px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  border-radius: 0 4px 4px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.pi-chat-activity-card:hover {
+  background: var(--background-modifier-hover);
+  border-left-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.pi-chat-activity-icon {
+  color: var(--interactive-accent);
+  font-size: 12px;
+  margin-right: 2px;
+}
+
+.pi-chat-activity-skill {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.pi-chat-activity-sep {
+  color: var(--text-faint, var(--text-muted));
+}
+
+.pi-chat-activity-operation {
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.pi-chat-activity-operation-create  { color: var(--interactive-accent); }
+.pi-chat-activity-operation-modify  { color: var(--text-warning, #e6a817); }
+.pi-chat-activity-operation-delete,
+.pi-chat-activity-operation-rename  { color: var(--text-error, #e53935); }
+
+.pi-chat-activity-path {
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pi-chat-activity-summary {
+  font-size: 10px;
+  color: var(--text-faint, var(--text-muted));
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+/* Session edit log modal (task 08) */
+.pi-chat-edit-log-modal h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.pi-chat-edit-log-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.pi-chat-edit-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.pi-chat-edit-log-row {
+  display: grid;
+  grid-template-columns: 80px 70px 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 6px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pi-chat-edit-log-row:last-child {
+  border-bottom: none;
+}
+
+.pi-chat-edit-log-time {
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  color: var(--text-faint, var(--text-muted));
+}
+
+.pi-chat-edit-log-op {
+  font-weight: 600;
+  text-transform: lowercase;
+  font-size: 10px;
+}
+
+.pi-chat-edit-log-path {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pi-chat-edit-log-summary {
+  font-size: 10px;
+  color: var(--text-muted);
+  justify-self: end;
+}
+
 /* Proposal pane (MergeView, task 07) */
 .pi-chat-proposal-pane {
   display: flex;
