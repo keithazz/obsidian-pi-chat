@@ -122,7 +122,17 @@
 }
 
 .pi-chat-msg {
+  display: flex;
+  flex-direction: column;
   margin-bottom: 12px;
+}
+
+.pi-chat-user {
+  align-items: flex-end;
+}
+
+.pi-chat-assistant {
+  align-items: flex-start;
 }
 
 .pi-chat-label {
@@ -137,23 +147,21 @@
   word-wrap: break-word;
   font-size: 13px;
   line-height: 1.5;
+  max-width: 90%;
 }
 
 .pi-chat-user .pi-chat-content {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
-  padding: 6px 10px;
-  border-radius: 8px;
-  display: inline-block;
-  max-width: 90%;
+  padding: 7px 12px;
+  border-radius: 14px 14px 4px 14px;
 }
 
 .pi-chat-assistant .pi-chat-content {
   background: var(--background-secondary);
-  padding: 6px 10px;
-  border-radius: 8px;
-  display: inline-block;
-  max-width: 90%;
+  padding: 7px 12px;
+  border-radius: 14px 14px 14px 4px;
+  border: 1px solid var(--background-modifier-border);
 }
 
 .pi-chat-system .pi-chat-content {
@@ -332,49 +340,62 @@ details[open] .pi-chat-trace-summary::before {
 }
 
 /* Activity cards (task 08) — one-line post-execution notifications.
-   Informational, not blocking. More compact than proposal cards. */
+   Pill-shaped, accent-tinted: informational but visually distinct from the
+   conversation messages around them. */
 .pi-chat-activity-card {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-  padding: 4px 8px;
-  margin-bottom: 4px;
-  font-size: 11px;
-  border-left: 2px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  border-radius: 0 4px 4px 0;
-  color: var(--text-muted);
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 40%, transparent);
+  color: var(--text-normal);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background 0.1s, border-color 0.1s;
+  transition: background 0.1s, border-color 0.1s, box-shadow 0.1s, transform 0.1s;
 }
 
 .pi-chat-activity-card:hover {
-  background: var(--background-modifier-hover);
-  border-left-color: var(--interactive-accent);
-  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  border-color: var(--interactive-accent);
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--interactive-accent) 30%, transparent);
+}
+
+.pi-chat-activity-card:active {
+  transform: translateY(1px);
 }
 
 .pi-chat-activity-icon {
   color: var(--interactive-accent);
-  font-size: 12px;
-  margin-right: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .pi-chat-activity-skill {
   font-weight: 600;
-  color: var(--text-normal);
+  color: var(--interactive-accent);
+  font-size: 11px;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
 }
 
 .pi-chat-activity-sep {
-  color: var(--text-faint, var(--text-muted));
+  color: color-mix(in srgb, var(--interactive-accent) 50%, transparent);
 }
 
 .pi-chat-activity-operation {
   font-weight: 600;
   text-transform: lowercase;
+  font-size: 11px;
 }
 
 .pi-chat-activity-operation-create  { color: var(--interactive-accent); }
@@ -384,7 +405,7 @@ details[open] .pi-chat-trace-summary::before {
 
 .pi-chat-activity-path {
   font-family: var(--font-monospace);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-normal);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -392,9 +413,8 @@ details[open] .pi-chat-trace-summary::before {
 
 .pi-chat-activity-summary {
   font-size: 10px;
-  color: var(--text-faint, var(--text-muted));
-  margin-left: auto;
-  padding-left: 8px;
+  color: var(--text-muted);
+  padding-left: 4px;
 }
 
 /* Read-only edit-diff pane summary bar (task 08) */
