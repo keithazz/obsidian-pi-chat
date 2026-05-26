@@ -13,7 +13,9 @@ class PiChatView extends ItemView {
   // DOM refs
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
-  private statusEl!: HTMLElement;
+  private statusDotEl!: HTMLElement;
+  private providerEl!: HTMLElement;
+  private modelEl!: HTMLElement;
 
   // Streaming state — accumulate tokens into the current assistant bubble
   private currentAssistantEl: HTMLElement | null = null;
@@ -36,8 +38,12 @@ class PiChatView extends ItemView {
     contentEl.addClass("pi-chat-container");
 
     // Status bar at top
-    this.statusEl = contentEl.createDiv({ cls: "pi-chat-status" });
-    this.setStatus("starting", "Starting Pi…");
+    const statusBar = contentEl.createDiv({ cls: "pi-chat-status" });
+    this.statusDotEl = statusBar.createSpan({ cls: "pi-chat-status-dot pi-chat-status-starting" });
+    const metaEl = statusBar.createSpan({ cls: "pi-chat-status-meta" });
+    this.providerEl = metaEl.createSpan({ cls: "pi-chat-status-provider", text: "—" });
+    metaEl.createSpan({ cls: "pi-chat-status-sep", text: " · " });
+    this.modelEl = metaEl.createSpan({ cls: "pi-chat-status-model", text: "—" });
 
     // Scrollable message list
     this.messagesEl = contentEl.createDiv({ cls: "pi-chat-messages" });
@@ -71,6 +77,7 @@ class PiChatView extends ItemView {
   // ─── Pi process lifecycle ────────────────────────────────────────────────
 
   private spawnPi(): void {
+
     // Vault root as cwd so pi sees the vault's files.
     const adapter = this.app.vault.adapter as any;
     const vaultPath: string = adapter.getBasePath?.() ?? ".";
@@ -95,7 +102,7 @@ class PiChatView extends ItemView {
         env: { ...process.env },
       });
     } catch (err: any) {
-      this.setStatus("error", `Spawn failed: ${err.message}`);
+      this.setStatus("error");
       this.addSystemMessage(
         `Failed to start Pi. Is it installed and on your PATH?\n\n${err.message}`
       );
@@ -114,22 +121,21 @@ class PiChatView extends ItemView {
 
     this.pi.on("error", (err) => {
       console.error("[pi-chat] process error:", err);
-      this.setStatus("error", `Pi error: ${err.message}`);
+      this.setStatus("error");
       this.addSystemMessage(`Pi process error: ${err.message}`);
     });
 
     this.pi.on("exit", (code, signal) => {
       console.log(`[pi-chat] exited code=${code} signal=${signal}`);
-      this.setStatus("stopped", `Pi stopped (code ${code})`);
+      this.setStatus("stopped");
       this.pi = null;
     });
 
-    // Give pi a moment to start, then mark ready.
-    // (There is no explicit "ready" event in pi's RPC — it just starts
-    // accepting JSONL on stdin once it's initialized.)
+    // Give pi a moment to start, then mark ready and fetch session state.
     setTimeout(() => {
       if (this.pi && !this.pi.killed) {
-        this.setStatus("ready", "Connected to Pi");
+        this.setStatus("ready");
+        this.pi.stdin!.write(JSON.stringify({ type: "get_state", id: "init-state" }) + "\n");
       }
     }, 2000);
   }
@@ -172,6 +178,24 @@ class PiChatView extends ItemView {
     console.log("[pi-chat event]", JSON.stringify(msg).slice(0, 300));
 
     const type = msg.type ?? msg.kind ?? "";
+
+    // ── RPC responses ──────────────────────────────────────────────────
+    if (type === "response") {
+      if (msg.command === "get_state" && msg.success && msg.data?.model) {
+        const m = msg.data.model;
+        if (m.provider) this.setProvider(m.provider);
+        if (m.id) this.setModel(m.id);
+      }
+      return;
+    }
+
+    // ── Live model change ──────────────────────────────────────────────
+    if (type === "model_change") {
+      if (msg.provider) this.setProvider(msg.provider);
+      const modelId = msg.modelId ?? msg.model;
+      if (modelId) this.setModel(modelId);
+      return;
+    }
 
     // ── Pi's streaming wrapper ──────────────────────────────────────────
     if (type === "message_update") {
@@ -361,12 +385,17 @@ class PiChatView extends ItemView {
     this.scroll();
   }
 
-  private setStatus(
-    state: "starting" | "ready" | "error" | "stopped",
-    text: string
-  ): void {
-    this.statusEl.setText(text);
-    this.statusEl.className = `pi-chat-status pi-chat-status-${state}`;
+  private setStatus(state: "starting" | "ready" | "error" | "stopped"): void {
+    this.statusDotEl.className = `pi-chat-status-dot pi-chat-status-${state}`;
+    this.statusDotEl.setAttribute("title", state);
+  }
+
+  private setProvider(provider: string): void {
+    this.providerEl.setText(provider);
+  }
+
+  private setModel(model: string): void {
+    this.modelEl.setText(model);
   }
 
   private scroll(): void {

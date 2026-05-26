@@ -7,14 +7,39 @@
 
 /* Status bar */
 .pi-chat-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 8px;
   font-size: 11px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
-.pi-chat-status-starting { color: var(--text-muted); }
-.pi-chat-status-ready    { color: var(--text-success, #4caf50); }
-.pi-chat-status-error    { color: var(--text-error, #e53935); }
-.pi-chat-status-stopped  { color: var(--text-muted); }
+
+.pi-chat-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.pi-chat-status-dot.pi-chat-status-starting { background: #999; }
+.pi-chat-status-dot.pi-chat-status-ready    { background: #4caf50; }
+.pi-chat-status-dot.pi-chat-status-error    { background: #e53935; }
+.pi-chat-status-dot.pi-chat-status-stopped  { background: #999; }
+
+.pi-chat-status-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.pi-chat-status-provider {
+  font-weight: 500;
+}
+
+.pi-chat-status-model {
+  font-family: var(--font-monospace);
+  font-size: 10px;
+}
 
 /* Message list */
 .pi-chat-messages {
