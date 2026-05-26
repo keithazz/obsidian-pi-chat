@@ -232,17 +232,16 @@ class PiChatView extends ItemView {
       },
     });
 
-    // const ticks = this.levelsEl.createDiv({ cls: "pi-chat-settings-slider-ticks" });
-    // for (const level of levels) {
-    //   ticks.createSpan({
-    //     cls: `pi-chat-settings-slider-tick${level === this.currentThinkingLevel ? " is-active" : ""}`,
-    //     text: level,
-    //   });
-    // }
+    const setFill = (i: number) => {
+      slider.style.setProperty("--fill-pct", `${(i / (levels.length - 1)) * 100}%`);
+    };
+    setFill(idx);
 
     slider.addEventListener("input", () => {
-      const newLevel = levels[parseInt(slider.value, 10)];
+      const i = parseInt(slider.value, 10);
+      const newLevel = levels[i];
       valueEl.setText(newLevel);
+      setFill(i);
       if (newLevel === this.currentThinkingLevel) return;
       // Optimistic: update local state + status bar immediately
       this.currentThinkingLevel = newLevel;

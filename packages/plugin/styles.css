@@ -427,6 +427,7 @@ details[open] .pi-chat-trace-summary::before {
 .pi-chat-settings-search:focus {
   outline: none;
   border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
 }
 
 /* Model list */
@@ -507,7 +508,34 @@ details[open] .pi-chat-trace-summary::before {
   flex: 1;
   margin: 0;
   cursor: pointer;
-  accent-color: var(--interactive-accent);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+  background: linear-gradient(
+    to right,
+    var(--interactive-accent) 0%,
+    var(--interactive-accent) var(--fill-pct, 0%),
+    var(--background-modifier-border) var(--fill-pct, 0%),
+    var(--background-modifier-border) 100%
+  );
+}
+
+.pi-chat-settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: box-shadow 0.1s;
+}
+
+.pi-chat-settings-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
 }
 
 /* Autonomy mode button group in settings */
