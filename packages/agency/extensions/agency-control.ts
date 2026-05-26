@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
+import { Type } from "typebox";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import {
   encodeExtensionMessage,
@@ -15,6 +16,7 @@ export type ToolClass =
   | "create"
   | "bash"
   | "external-service"
+  | "ask"
   | "unknown";
 
 export const TOOL_CLASS_TABLE: Record<string, ToolClass> = {
@@ -25,6 +27,7 @@ export const TOOL_CLASS_TABLE: Record<string, ToolClass> = {
   edit: "edit",
   write: "create",
   bash: "bash",
+  ask_user: "ask", // never gated; agent-initiated dialog
 };
 
 interface ClassificationInput {
@@ -56,6 +59,7 @@ function decide(
   event: { toolName: string; input: unknown },
 ): "allow" | "ask" | "deny" {
   if (klass === "read-only") return "allow";
+  if (klass === "ask") return "allow"; // the dialog itself surfaces UI
   if (klass === "external-service" || klass === "unknown") return "ask";
   if (klass === "bash") {
     if (m === "autonomous") {
@@ -359,6 +363,52 @@ export default function (pi: ExtensionAPI) {
       }),
       "info",
     );
+  });
+
+  pi.registerTool({
+    name: "ask_user",
+    label: "Ask the user",
+    description:
+      "Ask the educator a question that you genuinely need to answer before proceeding. " +
+      "Use sparingly: only when ambiguity or a missing preference cannot be resolved by reading " +
+      "the vault or by making a defensible default choice. The user's response is returned as " +
+      "the tool result.",
+    promptSnippet: "Ask the educator a clarifying question when needed.",
+    promptGuidelines: [
+      "Prefer making a sensible default choice and continuing over calling ask_user. Use ask_user only when the choice meaningfully changes the output and cannot be made without educator input.",
+      "When using ask_user, phrase the question concisely and offer concrete options if there's a small finite set.",
+    ],
+    parameters: Type.Object({
+      question: Type.String({
+        description: "The question to put to the educator. Concise; one sentence is ideal.",
+      }),
+      options: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Optional finite set of choices. If provided, the educator picks one of these; if omitted, the educator types a free-form response.",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!ctx.hasUI) {
+        throw new Error("ask_user called without a UI available");
+      }
+      const answer =
+        params.options && params.options.length > 0
+          ? await ctx.ui.select(params.question, params.options)
+          : await ctx.ui.input(params.question, "Type your answer…");
+
+      if (answer === undefined) {
+        return {
+          content: [{ type: "text", text: "(The user declined to answer.)" }],
+          details: { cancelled: true },
+        };
+      }
+      return {
+        content: [{ type: "text", text: String(answer) }],
+        details: { answer: String(answer) },
+      };
+    },
   });
 
   pi.registerCommand("agency-set-mode", {
