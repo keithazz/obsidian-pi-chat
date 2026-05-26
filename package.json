@@ -1,14 +1,16 @@
 {
-  "name": "pi-chat-poc",
+  "name": "educator-agency-monorepo",
   "version": "0.0.1",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "esbuild main.ts --bundle --external:obsidian --external:electron --format=cjs --outfile=main.js --platform=node",
-    "dev": "esbuild main.ts --bundle --external:obsidian --external:electron --format=cjs --outfile=main.js --platform=node --watch"
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev -w @educator-agency/shared & npm run dev -w @educator-agency/plugin & wait",
+    "link-dev-vault": "bash scripts/dev-link.sh"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
-    "obsidian": "^1.7.2",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.4.0"
   }
 }

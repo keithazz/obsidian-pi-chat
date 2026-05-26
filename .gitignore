@@ -1,1 +1,5 @@
 node_modules/
+packages/*/dist/
+dev-vault/
+.DS_Store
+*.tsbuildinfo

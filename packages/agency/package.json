@@ -1,0 +1,9 @@
+{
+  "name": "@educator-agency/agency",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Vault-installable agency: agency-control extension, default skills, and templates.",
+  "dependencies": {
+    "@educator-agency/shared": "*"
+  }
+}
