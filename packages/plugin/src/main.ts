@@ -7,6 +7,7 @@ import {
   AGENCY_PROTOCOL_VERSION,
   tryDecodeExtensionMessage,
   formatSlashCommand,
+  type AutonomyMode,
   type ExtensionToPluginMessage,
   type PluginToExtensionCommand,
 } from "@educator-agency/shared";
@@ -16,6 +17,13 @@ const VIEW_TYPE = "pi-chat-view";
 // ─── Chat View ───────────────────────────────────────────────────────────────
 
 class PiChatView extends ItemView {
+  private plugin: PiChatPlugin;
+
+  constructor(leaf: WorkspaceLeaf, plugin: PiChatPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+
   private pi: ChildProcess | null = null;
   private stdoutBuf = "";
   private msgId = 0;
@@ -36,6 +44,14 @@ class PiChatView extends ItemView {
   private providerEl: HTMLElement | null = null;
   private modelEl: HTMLElement | null = null;
   private thinkingLevelEl: HTMLElement | null = null;
+  private modeEl: HTMLElement | null = null;
+  private modeNoResponseEl: HTMLElement | null = null;
+
+  // Mode popover + settings button group
+  private modePopoverEl: HTMLElement | null = null;
+  private modeButtonsEl: HTMLElement | null = null;
+  private modePending = false;
+  private pendingModeTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Settings state
   private settingsOpen = false;
@@ -44,6 +60,8 @@ class PiChatView extends ItemView {
   private currentProvider = "";
   private currentModelId = "";
   private currentThinkingLevel = "";
+  private currentMode: AutonomyMode = "step-by-step";
+  private defaultMode: AutonomyMode = "step-by-step";
 
   // Streaming state
   private currentAssistantEl: HTMLElement | null = null;
@@ -55,6 +73,8 @@ class PiChatView extends ItemView {
   getIcon(): string { return "message-circle"; }
 
   async onOpen(): Promise<void> {
+    this.defaultMode = await this.plugin.getDefaultMode();
+
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("pi-chat-container");
@@ -115,6 +135,18 @@ class PiChatView extends ItemView {
   private renderSettingsPanel(): void {
     this.settingsEl.empty();
 
+    // Autonomy mode section
+    const modeSection = this.settingsEl.createDiv({ cls: "pi-chat-settings-section" });
+    modeSection.createDiv({ cls: "pi-chat-settings-heading", text: "Autonomy mode" });
+    this.modeButtonsEl = modeSection.createDiv({ cls: "pi-chat-settings-mode-buttons" });
+    this.renderModeButtons();
+
+    // Thinking level section
+    const thinkingSection = this.settingsEl.createDiv({ cls: "pi-chat-settings-section" });
+    thinkingSection.createDiv({ cls: "pi-chat-settings-heading", text: "Thinking level" });
+    this.levelsEl = thinkingSection.createDiv({ cls: "pi-chat-settings-slider-wrap" });
+    this.renderLevelSlider();
+
     // Model section
     const modelSection = this.settingsEl.createDiv({ cls: "pi-chat-settings-section" });
     modelSection.createDiv({ cls: "pi-chat-settings-heading", text: "Model" });
@@ -133,12 +165,21 @@ class PiChatView extends ItemView {
     } else {
       this.modelsListEl.createDiv({ cls: "pi-chat-settings-empty", text: "Loading…" });
     }
+  }
 
-    // Thinking level section
-    const thinkingSection = this.settingsEl.createDiv({ cls: "pi-chat-settings-section" });
-    thinkingSection.createDiv({ cls: "pi-chat-settings-heading", text: "Thinking level" });
-    this.levelsEl = thinkingSection.createDiv({ cls: "pi-chat-settings-slider-wrap" });
-    this.renderLevelSlider();
+  private renderModeButtons(): void {
+    if (!this.modeButtonsEl) return;
+    this.modeButtonsEl.empty();
+    const modes: AutonomyMode[] = ["step-by-step", "per-lesson", "autonomous"];
+    for (const mode of modes) {
+      const btn = this.modeButtonsEl.createEl("button", {
+        cls: `pi-chat-settings-mode-btn pi-chat-mode-${mode}${mode === this.currentMode ? " is-active" : ""}${this.modePending ? " is-pending" : ""}`,
+        text: mode,
+      });
+      btn.addEventListener("click", () => {
+        if (!this.modePending && mode !== this.currentMode) this.requestModeChange(mode);
+      });
+    }
   }
 
   private renderModelList(): void {
@@ -270,6 +311,8 @@ class PiChatView extends ItemView {
       if (this.pi && !this.pi.killed) {
         this.setStatus("ready");
         this.sendRpc({ type: "get_state", id: "init-state" });
+        // Apply user's preferred default mode for this session
+        this.sendControl({ name: "agency-set-mode", mode: this.defaultMode });
       }
     }, 2000);
   }
@@ -569,6 +612,14 @@ class PiChatView extends ItemView {
         break;
       case "mode-acknowledged":
         console.log(`[pi-chat] mode acknowledged: ${msg.mode} at ${msg.effectiveAt}`);
+        this.currentMode = msg.mode;
+        if (this.pendingModeTimeout !== null) {
+          clearTimeout(this.pendingModeTimeout);
+          this.pendingModeTimeout = null;
+        }
+        this.modePending = false;
+        this.updateModeDisplay();
+        if (this.settingsOpen) this.renderModeButtons();
         break;
       case "proposal":
         console.log(`[pi-chat] proposal received: ${msg.proposalId}`);
@@ -583,6 +634,79 @@ class PiChatView extends ItemView {
 
   private sendControl(cmd: PluginToExtensionCommand): void {
     this.sendRpc({ type: "prompt", id: `ctrl-${++this.msgId}`, message: formatSlashCommand(cmd) });
+  }
+
+  // ─── Mode switching ──────────────────────────────────────────────────────
+
+  public requestModeChange(mode: AutonomyMode): void {
+    if (this.modePending) return;
+    this.modePending = true;
+    this.updateModeDisplay();
+    this.sendControl({ name: "agency-set-mode", mode });
+    // Whatever the user picks becomes the default for future sessions too
+    this.defaultMode = mode;
+    this.plugin.setDefaultMode(mode).catch(console.error);
+    this.pendingModeTimeout = setTimeout(() => {
+      this.modePending = false;
+      this.pendingModeTimeout = null;
+      this.showModeNoResponse();
+      this.updateModeDisplay();
+    }, 3000);
+  }
+
+  private updateModeDisplay(): void {
+    if (!this.modeEl) return;
+    this.modeEl.className = `pi-chat-status-mode pi-chat-mode-${this.currentMode}${this.modePending ? " is-pending" : ""}`;
+    this.modeEl.setText(this.currentMode);
+  }
+
+  private showModeNoResponse(): void {
+    if (!this.modeNoResponseEl) return;
+    this.modeNoResponseEl.removeClass("pi-chat-hidden");
+    setTimeout(() => this.modeNoResponseEl?.addClass("pi-chat-hidden"), 3000);
+  }
+
+  private toggleModePopover(): void {
+    if (this.modePopoverEl) { this.closeModePopover(); return; }
+    if (this.modePending) return;
+    this.openModePopover();
+  }
+
+  private openModePopover(): void {
+    const popover = this.contentEl.createDiv({ cls: "pi-chat-mode-popover" });
+    this.modePopoverEl = popover;
+
+    const modes: AutonomyMode[] = ["step-by-step", "per-lesson", "autonomous"];
+    for (const mode of modes) {
+      const item = popover.createDiv({
+        cls: `pi-chat-mode-popover-item pi-chat-mode-${mode}${mode === this.currentMode ? " is-active" : ""}`,
+        text: mode,
+      });
+      item.addEventListener("click", () => {
+        this.closeModePopover();
+        this.requestModeChange(mode);
+      });
+    }
+
+    if (this.modeEl) {
+      const rect = this.modeEl.getBoundingClientRect();
+      const containerRect = this.contentEl.getBoundingClientRect();
+      popover.style.top = `${rect.bottom - containerRect.top + 2}px`;
+      popover.style.left = `${rect.left - containerRect.left}px`;
+    }
+
+    const onOutsideClick = (e: MouseEvent) => {
+      if (!popover.contains(e.target as Node) && e.target !== this.modeEl) {
+        this.closeModePopover();
+        document.removeEventListener("click", onOutsideClick, true);
+      }
+    };
+    setTimeout(() => document.addEventListener("click", onOutsideClick, true), 10);
+  }
+
+  private closeModePopover(): void {
+    this.modePopoverEl?.remove();
+    this.modePopoverEl = null;
   }
 
   // ─── Sending ─────────────────────────────────────────────────────────────
@@ -689,6 +813,17 @@ class PiChatView extends ItemView {
     this.modelEl = this.statusMetaEl.createSpan({ cls: "pi-chat-status-model", text: model });
     this.statusMetaEl.createSpan({ cls: "pi-chat-status-sep", text: " · thinking: " });
     this.thinkingLevelEl = this.statusMetaEl.createSpan({ cls: "pi-chat-status-thinking", text: thinkingLevel });
+    this.statusMetaEl.createSpan({ cls: "pi-chat-status-sep", text: " · mode: " });
+    this.modeEl = this.statusMetaEl.createSpan({
+      cls: `pi-chat-status-mode pi-chat-mode-${this.currentMode}`,
+      text: this.currentMode,
+      attr: { title: "Click to change autonomy mode", role: "button", tabindex: "0" },
+    });
+    this.modeNoResponseEl = this.statusMetaEl.createSpan({
+      cls: "pi-chat-mode-no-response pi-chat-hidden",
+      text: "(no response)",
+    });
+    this.modeEl.addEventListener("click", () => this.toggleModePopover());
   }
 
   private setProvider(provider: string): void {
@@ -711,14 +846,51 @@ class PiChatView extends ItemView {
 
 // ─── Plugin entry point ──────────────────────────────────────────────────────
 
+interface PiChatPluginData {
+  defaultMode: AutonomyMode;
+}
+
+const DEFAULT_PLUGIN_DATA: PiChatPluginData = { defaultMode: "step-by-step" };
+
 export default class PiChatPlugin extends Plugin {
   async onload(): Promise<void> {
-    this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new PiChatView(leaf));
+    this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new PiChatView(leaf, this));
     this.addCommand({
       id: "open-pi-chat",
       name: "Open Pi Chat",
       callback: () => this.activateView(),
     });
+
+    const autonomyModes: AutonomyMode[] = ["step-by-step", "per-lesson", "autonomous"];
+    for (const mode of autonomyModes) {
+      this.addCommand({
+        id: `pi-chat-set-mode-${mode}`,
+        name: `Pi Chat: Set autonomy to ${mode}`,
+        callback: () => {
+          const view = this.getView();
+          if (view) {
+            view.requestModeChange(mode);
+          } else {
+            new Notice("Pi Chat is not open.");
+          }
+        },
+      });
+    }
+  }
+
+  async getDefaultMode(): Promise<AutonomyMode> {
+    const data = (await this.loadData()) as PiChatPluginData | null;
+    return data?.defaultMode ?? DEFAULT_PLUGIN_DATA.defaultMode;
+  }
+
+  async setDefaultMode(mode: AutonomyMode): Promise<void> {
+    const data = ((await this.loadData()) as PiChatPluginData | null) ?? {};
+    await this.saveData({ ...data, defaultMode: mode });
+  }
+
+  private getView(): PiChatView | null {
+    const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    return leaf?.view instanceof PiChatView ? (leaf.view as PiChatView) : null;
   }
 
   async onunload(): Promise<void> {
