@@ -5,5 +5,8 @@
   "description": "Vault-installable agency: agency-control extension, default skills, and templates.",
   "dependencies": {
     "@educator-agency/shared": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   }
 }

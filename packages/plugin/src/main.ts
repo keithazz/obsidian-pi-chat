@@ -1,5 +1,7 @@
 import { Plugin, ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import { ChildProcess, spawn } from "child_process";
+import * as path from "path";
+import * as fs from "fs";
 
 const VIEW_TYPE = "pi-chat-view";
 
@@ -209,11 +211,22 @@ class PiChatView extends ItemView {
     const adapter = this.app.vault.adapter as any;
     const vaultPath: string = adapter.getBasePath?.() ?? ".";
 
+    const extensionPath = path.join(vaultPath, "agency", "extensions", "agency-control.ts");
+    const extensionExists = fs.existsSync(extensionPath);
+    if (!extensionExists) {
+      this.addSystemMessage(
+        `Agency extension not found at \`${extensionPath}\` — run \`npm run link-dev-vault\` or scaffold the agency`
+      );
+    }
+
     const isWin = process.platform === "win32";
     const shell = isWin ? undefined : process.env.SHELL || "/bin/zsh";
+    const extensionFlag = extensionExists ? ` --extension "${extensionPath}"` : "";
     const args = isWin
-      ? ["--mode rpc"]
-      : ["-l", "-c", `source ~/.zshrc 2>/dev/null; pi --mode rpc`];
+      ? extensionExists
+        ? ["--mode", "rpc", "--extension", extensionPath]
+        : ["--mode", "rpc"]
+      : ["-l", "-c", `source ~/.zshrc 2>/dev/null; pi --mode rpc${extensionFlag}`];
     const cmd = isWin ? "pi" : shell!;
 
     console.log(`[pi-chat] spawning: ${cmd} ${args.join(" ")}  cwd=${vaultPath}`);
