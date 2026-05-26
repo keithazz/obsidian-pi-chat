@@ -93,6 +93,7 @@ export default function (pi: ExtensionAPI) {
   // Default per decision D9; session-scoped, non-persistent.
   // To persist across /reload: pi.appendEntry("agency-mode", { mode }) + restore in session_start.
   let mode: AutonomyMode = "step-by-step";
+  let lastRejection: { requestId: string; reason: string } | null = null;
 
   pi.on("session_start", async (_event, ctx) => {
     mode = "step-by-step";
@@ -126,7 +127,9 @@ export default function (pi: ExtensionAPI) {
 
     const ok = await ctx.ui.confirm(title, message);
     if (!ok) {
-      return { block: true, reason: "Rejected by user" };
+      const reason = lastRejection?.reason ?? "Rejected by user";
+      lastRejection = null;
+      return { block: true, reason };
     }
     return undefined;
   });
@@ -149,6 +152,15 @@ export default function (pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       // Implementation deferred to the history work item; stub for now.
       ctx.ui.notify("Revert not yet implemented", "warning");
+    },
+  });
+
+  pi.registerCommand("agency-rejection-reason", {
+    description: "Stash the educator's reason for rejecting the last tool confirmation",
+    handler: async (args, _ctx) => {
+      const parsed = parseSlashArgs("agency-rejection-reason", args);
+      if (!parsed) return;
+      lastRejection = { requestId: parsed.requestId, reason: parsed.reason };
     },
   });
 }

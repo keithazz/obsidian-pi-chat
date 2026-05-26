@@ -24,7 +24,8 @@ export type ExtensionToPluginMessage =
 // Plugin → extension (slash commands; this is the union of payloads carried by them)
 export type PluginToExtensionCommand =
   | { name: "agency-set-mode"; mode: AutonomyMode }
-  | { name: "agency-revert"; editId: string };
+  | { name: "agency-revert"; editId: string }
+  | { name: "agency-rejection-reason"; requestId: string; reason: string };
 
 export function encodeExtensionMessage(msg: ExtensionToPluginMessage): string {
   const { kind, ...rest } = msg;
@@ -52,6 +53,8 @@ export function formatSlashCommand(cmd: PluginToExtensionCommand): string {
       return `/${cmd.name} ${encodeURIComponent(cmd.mode)}`;
     case "agency-revert":
       return `/${cmd.name} ${encodeURIComponent(cmd.editId)}`;
+    case "agency-rejection-reason":
+      return `/${cmd.name} ${encodeURIComponent(cmd.requestId)} ${encodeURIComponent(cmd.reason)}`;
   }
 }
 
@@ -73,6 +76,12 @@ export function parseSlashArgs<C extends PluginToExtensionCommand["name"]>(
       const editId = parts[0];
       if (!editId) return null;
       return { name: "agency-revert", editId } as Extract<PluginToExtensionCommand, { name: C }>;
+    }
+    case "agency-rejection-reason": {
+      const requestId = parts[0];
+      const reason = parts.slice(1).join(" ");
+      if (!requestId || !reason) return null;
+      return { name: "agency-rejection-reason", requestId, reason } as Extract<PluginToExtensionCommand, { name: C }>;
     }
     default:
       return null;

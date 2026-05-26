@@ -417,14 +417,146 @@ class PiChatView extends ItemView {
           }
           return;
         }
+        this.addSystemMessage(`🔔 ${msg.title ?? msg.message ?? ""}`);
+        if (this.pi && msg.id) {
+          this.sendRpc({ type: "extension_ui_response", id: msg.id, confirmed: true });
+        }
+        return;
       }
-      console.log("[pi-chat] auto-confirming ui request:", msg.id, msg.method);
-      this.addSystemMessage(`🔔 ${msg.method}: ${msg.title ?? msg.message ?? ""} [auto-confirmed]`);
-      if (this.pi && msg.id) {
-        this.sendRpc({ type: "extension_ui_response", id: msg.id, confirmed: true });
+
+      if (!msg.id) {
+        console.warn("[pi-chat] extension_ui_request without id, ignoring");
+        return;
+      }
+
+      try {
+        if (msg.method === "confirm") {
+          this.renderProposalCard(msg.id, msg.title ?? "", msg.message ?? "");
+        } else if (msg.method === "select") {
+          this.renderOptionsCard(msg.id, msg.title ?? msg.message ?? "", msg.options ?? []);
+        } else if (msg.method === "input") {
+          this.renderInputCard(msg.id, msg.title ?? "", msg.message ?? "", false);
+        } else if (msg.method === "editor") {
+          // Phase 1 fallback: plain textarea; diff view arrives in task 07.
+          this.renderInputCard(msg.id, msg.title ?? "(editor)", msg.message ?? "", true);
+        } else {
+          console.warn("[pi-chat] unknown extension_ui_request method:", msg.method);
+          this.sendRpc({ type: "extension_ui_response", id: msg.id, cancelled: true });
+        }
+      } catch (err) {
+        // Fail safe: never deadlock pi if card rendering throws.
+        // Closing the plugin without answering loses the pending request; the next pi turn will
+        // re-emit it or fail with a tool timeout (Phase 1 accepted limitation).
+        console.error("[pi-chat] error rendering proposal card:", err);
+        this.sendRpc({ type: "extension_ui_response", id: msg.id, cancelled: true });
       }
       return;
     }
+  }
+
+  // ─── Proposal cards ──────────────────────────────────────────────────────
+
+  private renderProposalCard(id: string, title: string, message: string): void {
+    const card = this.messagesEl.createDiv({
+      cls: "pi-chat-msg pi-chat-proposal-card",
+      attr: { "data-request-id": id },
+    });
+    card.createDiv({ cls: "pi-chat-proposal-title", text: title });
+    if (message) card.createDiv({ cls: "pi-chat-proposal-message", text: message });
+    const actions = card.createDiv({ cls: "pi-chat-proposal-actions" });
+
+    const resolve = (confirmed: boolean, pillText: string) => {
+      actions.remove();
+      const pill = card.createDiv({
+        cls: `pi-chat-proposal-pill ${confirmed ? "pi-chat-proposal-pill-accepted" : "pi-chat-proposal-pill-rejected"}`,
+      });
+      pill.setText(pillText);
+      this.sendRpc({ type: "extension_ui_response", id, confirmed });
+    };
+
+    actions.createEl("button", { cls: "pi-chat-proposal-accept", text: "Accept" })
+      .addEventListener("click", () => resolve(true, "✓ accepted"));
+    actions.createEl("button", { cls: "pi-chat-proposal-reject", text: "Reject" })
+      .addEventListener("click", () => resolve(false, "✗ rejected"));
+
+    const rejectReasonBtn = actions.createEl("button", {
+      cls: "pi-chat-proposal-reject-reason",
+      text: "Reject with reason…",
+    });
+    rejectReasonBtn.addEventListener("click", () => {
+      actions.empty();
+      const textarea = actions.createEl("textarea", {
+        cls: "pi-chat-proposal-reason-input",
+        attr: { placeholder: "Enter reason…", rows: "2" },
+      });
+      actions.createEl("button", { cls: "pi-chat-proposal-reason-submit", text: "Submit reason" })
+        .addEventListener("click", () => {
+          const reason = textarea.value.trim();
+          actions.remove();
+          const pill = card.createDiv({ cls: "pi-chat-proposal-pill pi-chat-proposal-pill-rejected" });
+          pill.setText("✗ rejected with reason");
+          this.sendRpc({ type: "extension_ui_response", id, confirmed: false });
+          if (reason) {
+            this.sendControl({ name: "agency-rejection-reason", requestId: id, reason });
+          }
+        });
+      textarea.focus();
+    });
+
+    this.scroll();
+  }
+
+  private renderOptionsCard(id: string, title: string, options: string[]): void {
+    const card = this.messagesEl.createDiv({
+      cls: "pi-chat-msg pi-chat-proposal-card",
+      attr: { "data-request-id": id },
+    });
+    card.createDiv({ cls: "pi-chat-proposal-title", text: title });
+    const actions = card.createDiv({ cls: "pi-chat-proposal-actions" });
+
+    for (const option of options) {
+      actions.createEl("button", { cls: "pi-chat-proposal-option", text: option })
+        .addEventListener("click", () => {
+          actions.remove();
+          const pill = card.createDiv({ cls: "pi-chat-proposal-pill pi-chat-proposal-pill-accepted" });
+          pill.setText(`✓ ${option}`);
+          this.sendRpc({ type: "extension_ui_response", id, confirmed: true, value: option });
+        });
+    }
+
+    this.scroll();
+  }
+
+  private renderInputCard(id: string, title: string, message: string, multiLine: boolean): void {
+    const card = this.messagesEl.createDiv({
+      cls: "pi-chat-msg pi-chat-proposal-card",
+      attr: { "data-request-id": id },
+    });
+    card.createDiv({ cls: "pi-chat-proposal-title", text: title });
+    if (message) card.createDiv({ cls: "pi-chat-proposal-message", text: message });
+    const form = card.createDiv({ cls: "pi-chat-proposal-actions pi-chat-proposal-input-form" });
+
+    const inputEl: HTMLInputElement | HTMLTextAreaElement = multiLine
+      ? form.createEl("textarea", {
+          cls: "pi-chat-proposal-text-input",
+          attr: { rows: "4", placeholder: "Enter text…" },
+        })
+      : form.createEl("input", {
+          cls: "pi-chat-proposal-text-input",
+          attr: { type: "text", placeholder: "Enter text…" },
+        });
+
+    form.createEl("button", { cls: "pi-chat-proposal-submit", text: "Submit" })
+      .addEventListener("click", () => {
+        const value = inputEl.value.trim();
+        form.remove();
+        const pill = card.createDiv({ cls: "pi-chat-proposal-pill pi-chat-proposal-pill-accepted" });
+        pill.setText("✓ submitted");
+        this.sendRpc({ type: "extension_ui_response", id, confirmed: true, value });
+      });
+
+    inputEl.focus();
+    this.scroll();
   }
 
   private handleControlMessage(msg: ExtensionToPluginMessage): void {
