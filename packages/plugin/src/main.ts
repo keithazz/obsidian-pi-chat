@@ -2,6 +2,11 @@ import { Plugin, ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import { ChildProcess, spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
+import { createHash } from "crypto";
+import { EditorState } from "@codemirror/state";
+import { EditorView, lineNumbers } from "@codemirror/view";
+import { MergeView } from "@codemirror/merge";
+import { markdown } from "@codemirror/lang-markdown";
 import {
   AGENCY_SENTINEL,
   AGENCY_PROTOCOL_VERSION,
@@ -13,11 +18,27 @@ import {
 } from "@educator-agency/shared";
 
 const VIEW_TYPE = "pi-chat-view";
+const VIEW_TYPE_PROPOSAL = "pi-chat-proposal-view";
+const PROPOSAL_REF_PREFIX = "AGENCY::proposal-ref::";
+const PROPOSAL_STASH_TTL_MS = 5 * 60 * 1000; // 5 minutes (task §Notes)
+
+interface StashedProposal {
+  proposalId: string;
+  path: string;
+  operation: "create" | "modify" | "delete" | "rename";
+  before: string;
+  after: string;
+  beforeHash: string;
+  skill: string;
+  turnId: string;
+  receivedAt: number;
+}
 
 // ─── Chat View ───────────────────────────────────────────────────────────────
 
 class PiChatView extends ItemView {
   private plugin: PiChatPlugin;
+  private vaultPath: string = ".";
 
   constructor(leaf: WorkspaceLeaf, plugin: PiChatPlugin) {
     super(leaf);
@@ -27,6 +48,12 @@ class PiChatView extends ItemView {
   private pi: ChildProcess | null = null;
   private stdoutBuf = "";
   private msgId = 0;
+
+  // Proposal stash for the two-step staged-payload codec (D7).
+  // Keyed by proposalId. Entries auto-expire after PROPOSAL_STASH_TTL_MS to bound
+  // memory if the extension stages but never follows up with an editor request.
+  private proposalStash = new Map<string, StashedProposal>();
+  private stashSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   // DOM refs
   private messagesEl!: HTMLElement;
@@ -110,10 +137,50 @@ class PiChatView extends ItemView {
     });
 
     this.spawnPi();
+
+    this.stashSweepTimer = setInterval(() => this.sweepStashedProposals(), 60 * 1000);
   }
 
   async onClose(): Promise<void> {
     this.killPi();
+    if (this.stashSweepTimer !== null) {
+      clearInterval(this.stashSweepTimer);
+      this.stashSweepTimer = null;
+    }
+    this.proposalStash.clear();
+  }
+
+  private sweepStashedProposals(): void {
+    const now = Date.now();
+    for (const [id, p] of this.proposalStash) {
+      if (now - p.receivedAt > PROPOSAL_STASH_TTL_MS) {
+        this.proposalStash.delete(id);
+      }
+    }
+  }
+
+  takeStashedProposal(proposalId: string): StashedProposal | undefined {
+    const p = this.proposalStash.get(proposalId);
+    if (p) this.proposalStash.delete(proposalId);
+    return p;
+  }
+
+  getVaultPath(): string {
+    return this.vaultPath;
+  }
+
+  respondToProposal(requestId: string, response: { value: string } | { cancelled: true }): void {
+    if ("cancelled" in response) {
+      this.sendRpc({ type: "extension_ui_response", id: requestId, cancelled: true });
+    } else {
+      // editor responses carry only { value }; cancellation uses { cancelled: true }.
+      this.sendRpc({ type: "extension_ui_response", id: requestId, value: response.value });
+    }
+  }
+
+  sendRejectionReason(requestId: string, reason: string): void {
+    if (!reason) return;
+    this.sendControl({ name: "agency-rejection-reason", requestId, reason });
   }
 
   // ─── Settings panel ──────────────────────────────────────────────────────
@@ -258,6 +325,7 @@ class PiChatView extends ItemView {
   private spawnPi(): void {
     const adapter = this.app.vault.adapter as any;
     const vaultPath: string = adapter.getBasePath?.() ?? ".";
+    this.vaultPath = vaultPath;
 
     const extensionPath = path.join(vaultPath, "agency", "extensions", "agency-control.ts");
     const extensionExists = fs.existsSync(extensionPath);
@@ -479,8 +547,18 @@ class PiChatView extends ItemView {
         } else if (msg.method === "input") {
           this.renderInputCard(msg.id, msg.title ?? "", msg.message ?? "", false);
         } else if (msg.method === "editor") {
-          // Phase 1 fallback: plain textarea; diff view arrives in task 07.
-          this.renderInputCard(msg.id, msg.title ?? "(editor)", msg.message ?? "", true);
+          const prefill: string = msg.prefill ?? msg.message ?? "";
+          if (typeof prefill === "string" && prefill.startsWith(PROPOSAL_REF_PREFIX)) {
+            const requestId = msg.id;
+            this.handleProposalEditor(requestId, prefill.slice(PROPOSAL_REF_PREFIX.length), msg.title ?? "")
+              .catch((err) => {
+                console.error("[pi-chat] proposal editor failed:", err);
+                this.sendRpc({ type: "extension_ui_response", id: requestId, cancelled: true });
+              });
+          } else {
+            // Non-proposal editor request — fall back to a multi-line input card.
+            this.renderInputCard(msg.id, msg.title ?? "(editor)", prefill, true);
+          }
         } else {
           console.warn("[pi-chat] unknown extension_ui_request method:", msg.method);
           this.sendRpc({ type: "extension_ui_response", id: msg.id, cancelled: true });
@@ -494,6 +572,32 @@ class PiChatView extends ItemView {
       }
       return;
     }
+  }
+
+  // ─── Proposal MergeView pane (D7) ────────────────────────────────────────
+
+  private async handleProposalEditor(requestId: string, proposalId: string, _title: string): Promise<void> {
+    const stashed = this.takeStashedProposal(proposalId);
+    if (!stashed) {
+      this.addSystemMessage(
+        `⚠️ Could not find staged proposal ${proposalId} — extension and plugin may have fallen out of sync. The agent's tool call will be rejected; ask it to retry.`,
+      );
+      this.respondToProposal(requestId, { cancelled: true });
+      return;
+    }
+
+    const { workspace } = this.app;
+    const leaf = workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_PROPOSAL, active: true });
+    workspace.revealLeaf(leaf);
+
+    const view = leaf.view;
+    if (!(view instanceof ProposalView)) {
+      // Should not happen; fail closed.
+      this.respondToProposal(requestId, { cancelled: true });
+      return;
+    }
+    view.initialize(this, requestId, stashed);
   }
 
   // ─── Proposal cards ──────────────────────────────────────────────────────
@@ -622,6 +726,17 @@ class PiChatView extends ItemView {
         break;
       case "proposal":
         console.log(`[pi-chat] proposal received: ${msg.proposalId}`);
+        this.proposalStash.set(msg.proposalId, {
+          proposalId: msg.proposalId,
+          path: msg.path,
+          operation: msg.operation,
+          before: msg.before,
+          after: msg.after,
+          beforeHash: msg.beforeHash,
+          skill: msg.skill,
+          turnId: msg.turnId,
+          receivedAt: Date.now(),
+        });
         break;
       case "edit-made":
         console.log(`[pi-chat] edit made: ${msg.editId}`);
@@ -843,6 +958,217 @@ class PiChatView extends ItemView {
   }
 }
 
+// ─── Proposal MergeView ItemView ─────────────────────────────────────────────
+
+class ProposalView extends ItemView {
+  private host: PiChatView | null = null;
+  private proposal: StashedProposal | null = null;
+  private requestId: string = "";
+  private answered = false;
+  private mergeView: MergeView | null = null;
+  private acceptBtn: HTMLButtonElement | null = null;
+  private rejectBtn: HTMLButtonElement | null = null;
+  private rejectReasonBtn: HTMLButtonElement | null = null;
+  private actionsEl: HTMLElement | null = null;
+  private statusEl: HTMLElement | null = null;
+  private bodyEl: HTMLElement | null = null;
+  private mergeContainerEl: HTMLElement | null = null;
+
+  getViewType(): string { return VIEW_TYPE_PROPOSAL; }
+  getDisplayText(): string {
+    if (!this.proposal) return "Proposal";
+    return `${this.proposal.operation} ${this.proposal.path}`;
+  }
+  getIcon(): string { return "git-pull-request"; }
+
+  async onClose(): Promise<void> {
+    if (!this.answered && this.host && this.requestId) {
+      this.host.respondToProposal(this.requestId, { cancelled: true });
+      this.answered = true;
+    }
+    this.mergeView?.destroy();
+    this.mergeView = null;
+  }
+
+  initialize(host: PiChatView, requestId: string, proposal: StashedProposal): void {
+    this.host = host;
+    this.requestId = requestId;
+    this.proposal = proposal;
+
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("pi-chat-proposal-pane");
+
+    // Header bar
+    const header = contentEl.createDiv({ cls: "pi-chat-proposal-pane-header" });
+    const titleRow = header.createDiv({ cls: "pi-chat-proposal-pane-title-row" });
+    titleRow.createSpan({ cls: "pi-chat-proposal-pane-path", text: proposal.path });
+    titleRow.createSpan({
+      cls: `pi-chat-proposal-pane-badge pi-chat-proposal-pane-badge-${proposal.operation}`,
+      text: proposal.operation,
+    });
+    const provenance = titleRow.createSpan({ cls: "pi-chat-proposal-pane-skill" });
+    provenance.setText(`skill: ${proposal.skill || "agent"}`);
+
+    this.actionsEl = header.createDiv({ cls: "pi-chat-proposal-pane-actions" });
+    this.acceptBtn = this.actionsEl.createEl("button", {
+      cls: "pi-chat-proposal-accept",
+      text: "Accept",
+    });
+    this.acceptBtn.addEventListener("click", () => this.accept());
+
+    this.rejectBtn = this.actionsEl.createEl("button", {
+      cls: "pi-chat-proposal-reject",
+      text: "Reject",
+    });
+    this.rejectBtn.addEventListener("click", () => this.reject());
+
+    this.rejectReasonBtn = this.actionsEl.createEl("button", {
+      cls: "pi-chat-proposal-reject-reason",
+      text: "Reject with reason…",
+    });
+    this.rejectReasonBtn.addEventListener("click", () => this.startRejectWithReason());
+
+    this.statusEl = contentEl.createDiv({ cls: "pi-chat-proposal-pane-status pi-chat-hidden" });
+
+    this.bodyEl = contentEl.createDiv({ cls: "pi-chat-proposal-pane-body" });
+    this.mergeContainerEl = this.bodyEl.createDiv({ cls: "pi-chat-proposal-pane-merge" });
+
+    this.checkStaleHash().catch((err) => console.warn("[pi-chat] stale-hash check failed:", err));
+    this.mountMergeView(proposal);
+  }
+
+  private mountMergeView(proposal: StashedProposal): void {
+    if (!this.mergeContainerEl) return;
+
+    const readOnlyExtensions = [
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+      lineNumbers(),
+      markdown(),
+    ];
+    const editableExtensions = [
+      EditorView.lineWrapping,
+      lineNumbers(),
+      markdown(),
+    ];
+
+    this.mergeView = new MergeView({
+      parent: this.mergeContainerEl,
+      orientation: "a-b",
+      highlightChanges: true,
+      gutter: true,
+      collapseUnchanged: { margin: 3, minSize: 4 },
+      a: {
+        doc: proposal.before,
+        extensions: readOnlyExtensions,
+      },
+      b: {
+        doc: proposal.after,
+        extensions: editableExtensions,
+      },
+    });
+  }
+
+  private async checkStaleHash(): Promise<void> {
+    if (!this.proposal || !this.host || !this.statusEl) return;
+    const vaultPath = this.host.getVaultPath();
+    const absPath = path.isAbsolute(this.proposal.path)
+      ? this.proposal.path
+      : path.join(vaultPath, this.proposal.path);
+
+    let currentHash: string;
+    try {
+      const content = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf8") : "";
+      currentHash = createHash("sha256").update(content, "utf8").digest("hex");
+    } catch (err) {
+      console.warn("[pi-chat] stale-hash read failed:", err);
+      return;
+    }
+
+    if (currentHash !== this.proposal.beforeHash) {
+      this.statusEl.empty();
+      this.statusEl.removeClass("pi-chat-hidden");
+      this.statusEl.addClass("pi-chat-proposal-pane-stale");
+      this.statusEl.setText(
+        "⚠ The file changed since this proposal was prepared. Accepting will overwrite those changes.",
+      );
+    }
+  }
+
+  private currentRightSideContent(): string {
+    return this.mergeView?.b.state.doc.toString() ?? this.proposal?.after ?? "";
+  }
+
+  private accept(): void {
+    if (this.answered || !this.host) return;
+    const value = this.currentRightSideContent();
+    this.answered = true;
+    this.host.respondToProposal(this.requestId, { value });
+    this.renderResolution("accepted");
+    this.closePane();
+  }
+
+  private reject(): void {
+    if (this.answered || !this.host) return;
+    this.answered = true;
+    this.host.respondToProposal(this.requestId, { cancelled: true });
+    this.renderResolution("rejected");
+    this.closePane();
+  }
+
+  private startRejectWithReason(): void {
+    if (!this.actionsEl) return;
+    this.actionsEl.empty();
+    const textarea = this.actionsEl.createEl("textarea", {
+      cls: "pi-chat-proposal-reason-input",
+      attr: { placeholder: "Reason for rejecting this proposal…", rows: "2" },
+    });
+    const submitBtn = this.actionsEl.createEl("button", {
+      cls: "pi-chat-proposal-reason-submit",
+      text: "Submit rejection",
+    });
+    const cancelBtn = this.actionsEl.createEl("button", {
+      cls: "pi-chat-proposal-reject",
+      text: "Cancel",
+    });
+    submitBtn.addEventListener("click", () => {
+      if (this.answered || !this.host) return;
+      const reason = textarea.value.trim();
+      this.answered = true;
+      this.host.respondToProposal(this.requestId, { cancelled: true });
+      if (reason) this.host.sendRejectionReason(this.requestId, reason);
+      this.renderResolution("rejected");
+      this.closePane();
+    });
+    cancelBtn.addEventListener("click", () => {
+      // Restore the standard action row.
+      this.actionsEl?.empty();
+      this.actionsEl?.appendChild(this.acceptBtn!);
+      this.actionsEl?.appendChild(this.rejectBtn!);
+      this.actionsEl?.appendChild(this.rejectReasonBtn!);
+    });
+    textarea.focus();
+  }
+
+  private renderResolution(outcome: "accepted" | "rejected"): void {
+    if (!this.statusEl) return;
+    this.statusEl.empty();
+    this.statusEl.removeClass("pi-chat-hidden");
+    this.statusEl.removeClass("pi-chat-proposal-pane-stale");
+    this.statusEl.addClass(
+      outcome === "accepted" ? "pi-chat-proposal-pane-resolved-ok" : "pi-chat-proposal-pane-resolved-no",
+    );
+    this.statusEl.setText(outcome === "accepted" ? "✓ accepted" : "✗ rejected");
+  }
+
+  private closePane(): void {
+    // Small delay so the user sees the resolution pill before the tab vanishes.
+    setTimeout(() => this.leaf.detach(), 600);
+  }
+}
+
 // ─── Plugin entry point ──────────────────────────────────────────────────────
 
 interface PiChatPluginData {
@@ -854,6 +1180,7 @@ const DEFAULT_PLUGIN_DATA: PiChatPluginData = { defaultMode: "step-by-step" };
 export default class PiChatPlugin extends Plugin {
   async onload(): Promise<void> {
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new PiChatView(leaf, this));
+    this.registerView(VIEW_TYPE_PROPOSAL, (leaf: WorkspaceLeaf) => new ProposalView(leaf));
     this.addCommand({
       id: "open-pi-chat",
       name: "Open Pi Chat",

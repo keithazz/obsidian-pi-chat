@@ -1,5 +1,7 @@
-import { existsSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
+import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import {
   encodeExtensionMessage,
   parseSlashArgs,
@@ -89,6 +91,102 @@ function renderPlainTextSummary(event: { toolName: string; input: unknown }): st
   }
 }
 
+function sha256Hex(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function resolveAbsolute(cwd: string, p: string): string {
+  return isAbsolute(p) ? p : resolve(cwd, p);
+}
+
+function readFileOrEmpty(absolutePath: string): string {
+  try {
+    return existsSync(absolutePath) ? readFileSync(absolutePath, "utf8") : "";
+  } catch {
+    return "";
+  }
+}
+
+// Approximate first-occurrence sequential application — close enough for a preview.
+// Pi's edit tool may apply differently (reverse-order, fuzzy match), but the preview
+// only needs to show the user roughly what is being proposed. The actual write is
+// performed by replacing the edits with a single full-content edit on accept.
+function applyEditsApprox(
+  before: string,
+  edits: ReadonlyArray<{ oldText: string; newText: string }>,
+): string {
+  let out = before;
+  for (const e of edits) {
+    if (!e.oldText) {
+      // pi treats empty oldText as "append" (rough approximation)
+      out = out + e.newText;
+      continue;
+    }
+    const idx = out.indexOf(e.oldText);
+    if (idx === -1) continue;
+    out = out.slice(0, idx) + e.newText + out.slice(idx + e.oldText.length);
+  }
+  return out;
+}
+
+interface ProposalContent {
+  proposalId: string;
+  path: string;
+  operation: "create" | "modify";
+  before: string;
+  after: string;
+  beforeHash: string;
+}
+
+function buildProposalForEdit(
+  event: ToolCallEvent,
+  cwd: string,
+): ProposalContent | null {
+  if (event.toolName === "edit") {
+    const input = event.input as { path: string; edits: { oldText: string; newText: string }[] };
+    if (!input.path) return null;
+    const abs = resolveAbsolute(cwd, input.path);
+    const before = readFileOrEmpty(abs);
+    const after = applyEditsApprox(before, input.edits ?? []);
+    return {
+      proposalId: randomUUID(),
+      path: input.path,
+      operation: "modify",
+      before,
+      after,
+      beforeHash: sha256Hex(before),
+    };
+  }
+  if (event.toolName === "write") {
+    const input = event.input as { path: string; content: string };
+    if (!input.path) return null;
+    const abs = resolveAbsolute(cwd, input.path);
+    const before = readFileOrEmpty(abs);
+    const operation: "create" | "modify" = existsSync(abs) ? "modify" : "create";
+    return {
+      proposalId: randomUUID(),
+      path: input.path,
+      operation,
+      before,
+      after: input.content ?? "",
+      beforeHash: sha256Hex(before),
+    };
+  }
+  return null;
+}
+
+function applyAcceptedContent(event: ToolCallEvent, before: string, decided: string): void {
+  if (event.toolName === "edit") {
+    // Convert any number of edits into a synthetic single full-content edit so the
+    // user's (possibly modified) decided content lands verbatim when pi runs the tool.
+    (event.input as { edits: { oldText: string; newText: string }[] }).edits = [
+      { oldText: before, newText: decided },
+    ];
+  } else if (event.toolName === "write") {
+    (event.input as { content: string }).content = decided;
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   // Default per decision D9; session-scoped, non-persistent.
   // To persist across /reload: pi.appendEntry("agency-mode", { mode }) + restore in session_start.
@@ -122,6 +220,50 @@ export default function (pi: ExtensionAPI) {
       return { block: true, reason: "No UI available to confirm" };
     }
 
+    // Edit/create proposals use the two-step staged-payload codec (D7): stage the
+    // before/after content via `notify`, then drive the user decision through an
+    // `editor` dialog whose prefill references the staged payload by id.
+    if (klass === "edit" || klass === "create") {
+      const proposal = buildProposalForEdit(event, ctx.cwd);
+      if (!proposal) {
+        return { block: true, reason: "Could not stage proposal (missing path)" };
+      }
+
+      const skill = "agent"; // D8: Phase 1 has no skills installed.
+      const turnId = ctx.sessionManager.getLeafId() ?? "";
+
+      ctx.ui.notify(
+        encodeExtensionMessage({
+          kind: "proposal",
+          proposalId: proposal.proposalId,
+          path: proposal.path,
+          operation: proposal.operation,
+          before: proposal.before,
+          after: proposal.after,
+          beforeHash: proposal.beforeHash,
+          skill,
+          turnId,
+        }),
+        "info",
+      );
+
+      const title = `${proposal.operation} ${proposal.path}`;
+      const decided = await ctx.ui.editor(
+        title,
+        `AGENCY::proposal-ref::${proposal.proposalId}`,
+      );
+
+      if (decided === undefined) {
+        const reason = lastRejection?.reason ?? "Rejected by user";
+        lastRejection = null;
+        return { block: true, reason };
+      }
+
+      applyAcceptedContent(event, proposal.before, decided);
+      return undefined;
+    }
+
+    // Plain-text confirm for bash, external-service, unknown.
     const title = `${event.toolName} — ${klass}`;
     const message = renderPlainTextSummary(event);
 
