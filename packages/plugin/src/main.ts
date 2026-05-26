@@ -2,6 +2,14 @@ import { Plugin, ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import { ChildProcess, spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
+import {
+  AGENCY_SENTINEL,
+  AGENCY_PROTOCOL_VERSION,
+  tryDecodeExtensionMessage,
+  formatSlashCommand,
+  type ExtensionToPluginMessage,
+  type PluginToExtensionCommand,
+} from "@educator-agency/shared";
 
 const VIEW_TYPE = "pi-chat-view";
 
@@ -395,6 +403,21 @@ class PiChatView extends ItemView {
 
     // ── extension_ui_request ────────────────────────────────────────────
     if (type === "extension_ui_request") {
+      if (msg.method === "notify") {
+        const notifyText: string = msg.message ?? "";
+        if (notifyText.startsWith(AGENCY_SENTINEL)) {
+          const decoded = tryDecodeExtensionMessage(notifyText);
+          if (decoded) {
+            this.handleControlMessage(decoded);
+          } else {
+            console.warn("[pi-chat] malformed agency sentinel:", notifyText);
+          }
+          if (this.pi && msg.id) {
+            this.sendRpc({ type: "extension_ui_response", id: msg.id, confirmed: true });
+          }
+          return;
+        }
+      }
       console.log("[pi-chat] auto-confirming ui request:", msg.id, msg.method);
       this.addSystemMessage(`🔔 ${msg.method}: ${msg.title ?? msg.message ?? ""} [auto-confirmed]`);
       if (this.pi && msg.id) {
@@ -402,6 +425,32 @@ class PiChatView extends ItemView {
       }
       return;
     }
+  }
+
+  private handleControlMessage(msg: ExtensionToPluginMessage): void {
+    switch (msg.kind) {
+      case "loaded":
+        if (msg.protocolVersion !== AGENCY_PROTOCOL_VERSION) {
+          console.warn(`[pi-chat] agency version mismatch: expected ${AGENCY_PROTOCOL_VERSION}, got ${msg.protocolVersion}`);
+        }
+        console.log("[pi-chat] agency ready");
+        break;
+      case "mode-acknowledged":
+        console.log(`[pi-chat] mode acknowledged: ${msg.mode} at ${msg.effectiveAt}`);
+        break;
+      case "proposal":
+        console.log(`[pi-chat] proposal received: ${msg.proposalId}`);
+        break;
+      case "edit-made":
+        console.log(`[pi-chat] edit made: ${msg.editId}`);
+        break;
+      default:
+        console.log("[pi-chat] unknown control message kind:", (msg as any).kind);
+    }
+  }
+
+  private sendControl(cmd: PluginToExtensionCommand): void {
+    this.sendRpc({ type: "prompt", id: `ctrl-${++this.msgId}`, message: formatSlashCommand(cmd) });
   }
 
   // ─── Sending ─────────────────────────────────────────────────────────────
@@ -521,6 +570,7 @@ class PiChatView extends ItemView {
   private setThinkingLevel(level: string): void {
     if (this.thinkingLevelEl) this.thinkingLevelEl.setText(level);
   }
+
 
   private scroll(): void {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
