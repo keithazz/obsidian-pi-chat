@@ -41,6 +41,11 @@
   font-size: 10px;
 }
 
+.pi-chat-status-thinking {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
 /* Message list */
 .pi-chat-messages {
   flex: 1;

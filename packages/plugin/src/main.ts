@@ -14,8 +14,10 @@ class PiChatView extends ItemView {
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private statusDotEl!: HTMLElement;
-  private providerEl!: HTMLElement;
-  private modelEl!: HTMLElement;
+  private statusMetaEl!: HTMLElement;
+  private providerEl: HTMLElement | null = null;
+  private modelEl: HTMLElement | null = null;
+  private thinkingLevelEl: HTMLElement | null = null;
 
   // Streaming state — accumulate tokens into the current assistant bubble
   private currentAssistantEl: HTMLElement | null = null;
@@ -40,10 +42,7 @@ class PiChatView extends ItemView {
     // Status bar at top
     const statusBar = contentEl.createDiv({ cls: "pi-chat-status" });
     this.statusDotEl = statusBar.createSpan({ cls: "pi-chat-status-dot pi-chat-status-starting" });
-    const metaEl = statusBar.createSpan({ cls: "pi-chat-status-meta" });
-    this.providerEl = metaEl.createSpan({ cls: "pi-chat-status-provider", text: "—" });
-    metaEl.createSpan({ cls: "pi-chat-status-sep", text: " · " });
-    this.modelEl = metaEl.createSpan({ cls: "pi-chat-status-model", text: "—" });
+    this.statusMetaEl = statusBar.createSpan({ cls: "pi-chat-status-meta", text: "connecting…" });
 
     // Scrollable message list
     this.messagesEl = contentEl.createDiv({ cls: "pi-chat-messages" });
@@ -181,19 +180,27 @@ class PiChatView extends ItemView {
 
     // ── RPC responses ──────────────────────────────────────────────────
     if (type === "response") {
-      if (msg.command === "get_state" && msg.success && msg.data?.model) {
-        const m = msg.data.model;
-        if (m.provider) this.setProvider(m.provider);
-        if (m.id) this.setModel(m.id);
+      if (msg.command === "get_state" && msg.success) {
+        const m = msg.data?.model;
+        this.applySessionMeta(
+          m?.provider ?? "—",
+          m?.id ?? "—",
+          msg.data?.thinkingLevel ?? "—"
+        );
       }
       return;
     }
 
-    // ── Live model change ──────────────────────────────────────────────
+    // ── Live model / thinking-level changes ───────────────────────────
     if (type === "model_change") {
       if (msg.provider) this.setProvider(msg.provider);
       const modelId = msg.modelId ?? msg.model;
       if (modelId) this.setModel(modelId);
+      return;
+    }
+
+    if (type === "thinking_level_change") {
+      if (msg.thinkingLevel) this.setThinkingLevel(msg.thinkingLevel);
       return;
     }
 
@@ -390,12 +397,25 @@ class PiChatView extends ItemView {
     this.statusDotEl.setAttribute("title", state);
   }
 
+  private applySessionMeta(provider: string, model: string, thinkingLevel: string): void {
+    this.statusMetaEl.empty();
+    this.providerEl = this.statusMetaEl.createSpan({ cls: "pi-chat-status-provider", text: provider });
+    this.statusMetaEl.createSpan({ cls: "pi-chat-status-sep", text: " · " });
+    this.modelEl = this.statusMetaEl.createSpan({ cls: "pi-chat-status-model", text: model });
+    this.statusMetaEl.createSpan({ cls: "pi-chat-status-sep", text: " · thinking: " });
+    this.thinkingLevelEl = this.statusMetaEl.createSpan({ cls: "pi-chat-status-thinking", text: thinkingLevel });
+  }
+
   private setProvider(provider: string): void {
-    this.providerEl.setText(provider);
+    if (this.providerEl) this.providerEl.setText(provider);
   }
 
   private setModel(model: string): void {
-    this.modelEl.setText(model);
+    if (this.modelEl) this.modelEl.setText(model);
+  }
+
+  private setThinkingLevel(level: string): void {
+    if (this.thinkingLevelEl) this.thinkingLevelEl.setText(level);
   }
 
   private scroll(): void {
