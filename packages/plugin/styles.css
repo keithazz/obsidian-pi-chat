@@ -428,28 +428,30 @@ details[open] .pi-chat-trace-summary::before {
 
 .pi-chat-proposal-pane-body {
   flex: 1;
-  overflow: hidden;
   display: flex;
   min-height: 0;
 }
 
+/* CodeMirror's MergeView docs: style `.cm-mergeView` with a height and
+   `overflow: auto` to enable scrolling. We let the editor heights grow with
+   content and put the scroll on the MergeView itself so the two sides stay
+   aligned as the user scrolls. */
 .pi-chat-proposal-pane-merge {
   flex: 1;
-  overflow: auto;
   min-height: 0;
+  min-width: 0;
+  display: flex;
 }
 
 .pi-chat-proposal-pane-merge .cm-mergeView {
+  flex: 1;
   height: 100%;
+  overflow: auto;
   font-size: 13px;
 }
 
 .pi-chat-proposal-pane-merge .cm-mergeViewEditors {
-  height: 100%;
-}
-
-.pi-chat-proposal-pane-merge .cm-editor {
-  height: 100%;
+  align-items: stretch;
 }
 
 /* Input area */
