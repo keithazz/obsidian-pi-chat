@@ -1,5 +1,5 @@
 // Custom RPC vocabulary layered on top of pi's protocol.
-// See docs/ARCHITECTURE.md §4.1.
+// See docs/ADR/01-basic-architecture.md §4.1.
 //
 // Extension → plugin rides on ctx.ui.notify with AGENCY:: sentinel.
 // Plugin → extension rides on pi.registerCommand / prompt slash commands.

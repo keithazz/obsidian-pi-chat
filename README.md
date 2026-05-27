@@ -5,7 +5,7 @@ built on Obsidian and the [pi](https://github.com/earendil-works/pi) coding
 agent runtime.
 
 For the product vision and architectural detail, see
-[docs/PRD.md](docs/PRD.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+[docs/PRD/01-basic-requirements.md](docs/PRD/01-basic-requirements.md) and [docs/ADR/01-basic-architecture.md](docs/ADR/01-basic-architecture.md).
 
 ## Packages
 
@@ -85,7 +85,7 @@ After the dev loop is running:
    response.
 
 The plugin auto-confirms `extension_ui_request` events for now (approval
-gating is a later phase). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+gating is a later phase). See [docs/ADR/01-basic-architecture.md](docs/ADR/01-basic-architecture.md)
 for the full target architecture.
 
 ## What this does NOT yet do

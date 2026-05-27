@@ -1,6 +1,6 @@
 # ARCHITECTURE — Educator Agency
 
-> Detailed technical architecture for the system described in [PRD.md](./PRD.md). For the work plan, see [PLAN.md](./PLAN.md). Intended for contributors and integrators.
+> Detailed technical architecture for the system described in [PRD/01-basic-requirements.md](./PRD/01-basic-requirements.md). For the work plan, see [PLAN.md](./PLAN.md). Intended for contributors and integrators.
 
 ## 1. Overview
 

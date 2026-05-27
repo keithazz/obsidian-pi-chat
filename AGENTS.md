@@ -21,10 +21,10 @@ across all three packages — that is why this is a monorepo.
 
 Order matters:
 
-1. **[docs/PRD.md](docs/PRD.md)** — vision, target users, requirements,
+1. **[docs/PRD/01-basic-requirements.md](docs/PRD/01-basic-requirements.md)** — vision, target users, requirements,
    non-goals. Read this when a request might affect *what* the system does
    for the educator.
-2. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — components, the
+2. **[docs/ADR/01-basic-architecture.md](docs/ADR/01-basic-architecture.md)** — components, the
    approval mechanism, the RPC additions, state ownership, distribution,
    trust model, accepted tradeoffs, and open architectural questions.
    Read this when a request affects *how* the system is built. Section
@@ -55,8 +55,8 @@ packages/
     └── src/rpc.ts              # set_autonomy_mode, edit_made, etc.
 
 docs/
-├── PRD.md
-└── ARCHITECTURE.md
+├── PRD/01-basic-requirements.md
+└── ADR/01-basic-architecture.md
 
 scripts/
 ├── dev-link.sh              # one-shot: symlinks plugin + agency into dev-vault/
@@ -74,8 +74,8 @@ dev-vault/                   # gitignored; an Obsidian vault used only for testi
 | Skill prompts, orchestrator logic, pedagogy templates | `packages/agency/skills/` and `packages/agency/PEDAGOGY.md` |
 | The custom RPC schema between plugin and extension | `packages/shared/src/rpc.ts` (then update both consumers) |
 | Build, lint, workspaces, dev scripts | repo root + `scripts/` |
-| Product intent | `docs/PRD.md` |
-| Architectural decisions | `docs/ARCHITECTURE.md` |
+| Product intent | `docs/PRD/01-basic-requirements.md` |
+| Architectural decisions | `docs/ADR/01-basic-architecture.md` |
 
 When in doubt, follow the mapping in **ARCHITECTURE §3 (Components)**.
 
@@ -188,6 +188,6 @@ Never assume these exist locally or commit anything related to them:
   this — transparency is the trust model.
 - Do not commit anything under `dev-vault/`. It is gitignored for a
   reason; treat it as scratch space.
-- Do not delete or rewrite `docs/PRD.md` or `docs/ARCHITECTURE.md`
+- Do not delete or rewrite `docs/PRD/01-basic-requirements.md` or `docs/ADR/01-basic-architecture.md`
   without an explicit request. They are the project's contract; propose
   edits as suggestions.
