@@ -2,6 +2,8 @@ Break a feature into a structured task folder under `tasks/` — one folder per 
 
 ## What to do
 
+0. Unless a specific work breakdown has already been agreed upon, split a proposed PRD/feature into tasks that a subagent can carry out. Propose the task split to the user, and only proceed to create tasks once the user has agreed on the work split.
+
 1. **Read the existing work first.**
    - Scan `tasks/` to find the next sequence number (zero-padded three digits, e.g. `002`).
    - Read the relevant `docs/PRD/` and `docs/ADR/` sections for the feature. Note §references you'll cite in task files.
