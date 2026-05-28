@@ -5,7 +5,18 @@ export type NavOp =
   | "attachment_list"
   | "heading_outline"
   | "block_resolve"
-  | "heading_search";
+  | "heading_search"
+  | "note_read"
+  | "section_read"
+  | "block_read"
+  | "lines_read"
+  | "backlinks"
+  | "forward_links"
+  | "unresolved_links"
+  | "graph_traverse"
+  | "list_tags"
+  | "notes_by_tag"
+  | "query_tags";
 
 export interface NavQuery {
   queryId: string;
@@ -31,6 +42,14 @@ export interface NavResponse {
   result?: unknown;
   error?: NavError;
 }
+
+export type TagMatch = "exact" | "prefix"
+
+export type TagExpr =
+  | { op: "tag";  value: string; match?: TagMatch }
+  | { op: "and";  operands: TagExpr[] }
+  | { op: "or";   operands: TagExpr[] }
+  | { op: "not";  operand:  TagExpr }
 
 const NAV_QUERY_PREFIX = "AGENCY::nav-query::";
 

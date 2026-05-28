@@ -159,6 +159,147 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "vault_read",
+    label: "Read note",
+    description: "Read the full content of a note. Returns the body and optionally the frontmatter.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the note." }),
+      frontmatter: Type.Optional(Type.Union([
+        Type.Literal("raw"),
+        Type.Literal("parsed"),
+        Type.Literal("omit"),
+      ], { description: "How to include frontmatter: raw (default), parsed as object, or omit." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("note_read", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_read_section",
+    label: "Read note section",
+    description: "Read a specific section of a note by heading name. Returns only that section's lines.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the note." }),
+      heading: Type.String({ description: "Heading text to match (case-insensitive exact match)." }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("section_read", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_read_block",
+    label: "Read block by ID",
+    description: "Read the paragraph containing a block reference (^block-id) from a note.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the note." }),
+      blockId: Type.String({ description: "Block ID to read (without the ^ caret)." }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("block_read", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_read_lines",
+    label: "Read line range",
+    description: "Read a specific line range from a note (0-indexed, inclusive, max 500 lines).",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the note." }),
+      startLine: Type.Number({ description: "First line to read (0-indexed)." }),
+      endLine: Type.Number({ description: "Last line to read (0-indexed, inclusive)." }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("lines_read", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_backlinks",
+    label: "Get backlinks",
+    description: "Return all notes that link to a given note, with source location and link type.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the target note." }),
+      types: Type.Optional(Type.Array(Type.Union([
+        Type.Literal("wikilink"),
+        Type.Literal("markdown"),
+        Type.Literal("embed"),
+      ]), { description: "Filter to specific link types. Defaults to all." })),
+      max_results: Type.Number({ description: "Maximum number of entries to return.", default: 50 }),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("backlinks", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_forward_links",
+    label: "Get forward links",
+    description: "Return all links (and optionally unresolved links) that a note makes to other notes.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the source note." }),
+      types: Type.Optional(Type.Array(Type.Union([
+        Type.Literal("wikilink"),
+        Type.Literal("markdown"),
+        Type.Literal("embed"),
+      ]), { description: "Filter to specific link types. Defaults to all." })),
+      includeUnresolved: Type.Optional(Type.Boolean({ description: "Include links to non-existent notes. Defaults to true." })),
+      max_results: Type.Number({ description: "Maximum number of entries to return.", default: 50 }),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("forward_links", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_unresolved_links",
+    label: "List unresolved links",
+    description: "List all unresolved link targets across the entire vault, grouped by target and sorted by number of sources.",
+    parameters: Type.Object({
+      max_results: Type.Number({ description: "Maximum number of unresolved targets to return.", default: 50 }),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("unresolved_links", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_graph_traverse",
+    label: "Traverse link graph",
+    description: "BFS-expand the link graph from a starting note up to a given depth, returning nodes and edges. depth must be 1–5.",
+    parameters: Type.Object({
+      startPath: Type.String({ description: "Vault-relative path to the starting note." }),
+      depth: Type.Number({ description: "Number of hops to traverse (1–5)." }),
+      direction: Type.Optional(Type.Union([
+        Type.Literal("outgoing"),
+        Type.Literal("incoming"),
+        Type.Literal("both"),
+      ], { description: "Which link directions to follow. Defaults to both." })),
+      edgeTypes: Type.Optional(Type.Union([
+        Type.Literal("link"),
+        Type.Literal("embed"),
+        Type.Literal("both"),
+      ], { description: "Which edge types to include. Defaults to both." })),
+      nodeCap: Type.Optional(Type.Number({ description: "Maximum nodes to return (default 100, max 500)." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("graph_traverse", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
     name: "vault_heading_search",
     label: "Search headings",
     description: "Search for headings across all notes in the vault.",
