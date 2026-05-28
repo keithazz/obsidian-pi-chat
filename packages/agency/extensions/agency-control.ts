@@ -9,6 +9,7 @@ import {
   AGENCY_PROTOCOL_VERSION,
   type AutonomyMode,
 } from "@educator-agency/shared";
+import { registerNavigationTools } from "./navigation-tools";
 
 export type ToolClass =
   | "read-only"
@@ -225,6 +226,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     mode = "step-by-step";
     pendingEdits.clear();
+    registerNavigationTools(pi);
     ctx.ui.notify(
       encodeExtensionMessage({ kind: "loaded", protocolVersion: AGENCY_PROTOCOL_VERSION }),
       "info",

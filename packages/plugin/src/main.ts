@@ -15,7 +15,11 @@ import {
   type AutonomyMode,
   type ExtensionToPluginMessage,
   type PluginToExtensionCommand,
+  decodeNavQuery,
+  type NavResponse,
 } from "@educator-agency/shared";
+import { NavigationService } from "./navigation/NavigationService";
+import { NavError } from "./navigation/errors";
 
 const VIEW_TYPE = "pi-chat-view";
 const VIEW_TYPE_PROPOSAL = "pi-chat-proposal-view";
@@ -110,6 +114,8 @@ class PiChatView extends ItemView {
   private currentMode: AutonomyMode = "step-by-step";
   private defaultMode: AutonomyMode = "step-by-step";
 
+  private navigationService!: NavigationService;
+
   // Streaming state
   private currentAssistantEl: HTMLElement | null = null;
   private currentThinkingEl: HTMLElement | null = null;
@@ -120,6 +126,7 @@ class PiChatView extends ItemView {
   getIcon(): string { return "message-circle"; }
 
   async onOpen(): Promise<void> {
+    this.navigationService = new NavigationService(this.app);
     this.defaultMode = await this.plugin.getDefaultMode();
 
     const { contentEl } = this;
@@ -568,6 +575,22 @@ class PiChatView extends ItemView {
           this.renderInputCard(msg.id, msg.title ?? "", msg.message ?? "", false);
         } else if (msg.method === "editor") {
           const prefill: string = msg.prefill ?? msg.message ?? "";
+          if (typeof prefill === "string" && prefill.startsWith("AGENCY::nav-query::")) {
+            const requestId = msg.id;
+            const query = decodeNavQuery(prefill);
+            (async () => {
+              let response: NavResponse;
+              try {
+                const result = await this.navigationService.execute(query.op, query.params);
+                response = { queryId: query.queryId, result };
+              } catch (e) {
+                const kind = e instanceof NavError ? e.kind : "invalid_query";
+                response = { queryId: query.queryId, error: { kind, message: String(e) } };
+              }
+              this.sendRpc({ type: "extension_ui_response", id: requestId, value: JSON.stringify(response) });
+            })().catch((e) => console.error("[pi-chat] nav-query bridge error:", e));
+            return;
+          }
           if (typeof prefill === "string" && prefill.startsWith(PROPOSAL_REF_PREFIX)) {
             const requestId = msg.id;
             this.handleProposalEditor(requestId, prefill.slice(PROPOSAL_REF_PREFIX.length), msg.title ?? "")
