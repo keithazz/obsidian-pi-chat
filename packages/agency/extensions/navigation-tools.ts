@@ -49,7 +49,7 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
     description: "List the immediate children of a vault folder (files and subfolders).",
     parameters: Type.Object({
       path: Type.String({ description: "Vault-relative path to the folder." }),
-      max_results: Type.Number({ description: "Maximum number of items to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of items to return." }),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -63,7 +63,7 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
     label: "List notes",
     description: "List markdown notes in the vault, optionally filtered by glob and sorted.",
     parameters: Type.Object({
-      max_results: Type.Number({ description: "Maximum number of notes to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of notes to return." }),
       glob: Type.Optional(Type.String({ description: "Glob pattern to filter note paths." })),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
       sort: Type.Optional(Type.Union([
@@ -83,7 +83,7 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
     label: "List attachments",
     description: "List non-markdown files in the vault, optionally scoped to a folder.",
     parameters: Type.Object({
-      max_results: Type.Number({ description: "Maximum number of attachments to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of attachments to return." }),
       folder: Type.Optional(Type.String({ description: "Vault-relative folder path to scope the listing." })),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
     }),
@@ -230,7 +230,7 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
         Type.Literal("markdown"),
         Type.Literal("embed"),
       ]), { description: "Filter to specific link types. Defaults to all." })),
-      max_results: Type.Number({ description: "Maximum number of entries to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of entries to return." }),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -251,7 +251,7 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
         Type.Literal("embed"),
       ]), { description: "Filter to specific link types. Defaults to all." })),
       includeUnresolved: Type.Optional(Type.Boolean({ description: "Include links to non-existent notes. Defaults to true." })),
-      max_results: Type.Number({ description: "Maximum number of entries to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of entries to return." }),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -265,7 +265,7 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
     label: "List unresolved links",
     description: "List all unresolved link targets across the entire vault, grouped by target and sorted by number of sources.",
     parameters: Type.Object({
-      max_results: Type.Number({ description: "Maximum number of unresolved targets to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of unresolved targets to return." }),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -310,11 +310,157 @@ export function registerNavigationTools(pi: ExtensionAPI): void {
         Type.Literal("exact"),
         Type.Literal("regex"),
       ], { description: "How to match: substring (default), exact, or regex." })),
-      max_results: Type.Number({ description: "Maximum number of results to return.", default: 50 }),
+      max_results: Type.Number({ description: "Maximum number of results to return." }),
       cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const result = await queryPlugin("heading_search", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_list_tags",
+    label: "List tags",
+    description: "List all tags used in the vault, with instance and note counts. max_results is required.",
+    parameters: Type.Object({
+      max_results: Type.Number({ description: "Maximum number of tags to return." }),
+      prefix: Type.Optional(Type.String({ description: "Filter to tags starting with this prefix (e.g. \"topic\" matches #topic and #topic/subtag)." })),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("list_tags", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_notes_by_tag",
+    label: "Notes by tag",
+    description: "Find all notes containing a specific tag. max_results is required.",
+    parameters: Type.Object({
+      tag: Type.String({ description: "Tag to search for (with or without # prefix)." }),
+      max_results: Type.Number({ description: "Maximum number of notes to return." }),
+      match: Type.Optional(Type.Union([
+        Type.Literal("exact"),
+        Type.Literal("prefix"),
+      ], { description: "exact: only this exact tag. prefix (default): tag and all subtags." })),
+      source: Type.Optional(Type.Union([
+        Type.Literal("frontmatter"),
+        Type.Literal("inline"),
+      ], { description: "Restrict to a specific tag source. Omit for both." })),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("notes_by_tag", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_query_tags",
+    label: "Query tags with expression",
+    description: [
+      "Find notes matching a boolean tag expression.",
+      "expr is a JSON tree: leaf op=tag {op:\"tag\",value:\"topic\",match:\"prefix\"|\"exact\"};",
+      "combinators op=and/or {op:\"and\",operands:[...]} or op=not {op:\"not\",operand:{...}}.",
+      "Max depth 8, max 20 leaf nodes. max_results is required.",
+    ].join(" "),
+    parameters: Type.Object({
+      expr: Type.Any({ description: "Tag expression tree." }),
+      max_results: Type.Number({ description: "Maximum number of notes to return." }),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("query_tags", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_frontmatter_get",
+    label: "Get frontmatter",
+    description: "Return the parsed frontmatter fields for a single note.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the note." }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("frontmatter_get", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_query_frontmatter",
+    label: "Query frontmatter",
+    description: [
+      "Find notes whose frontmatter matches a boolean expression.",
+      "Leaf ops: exists, eq, neq, gt, gte, lt, lte, in, contains, contains_all, intersects, regex.",
+      "Combinators: and {operands:[]}, or {operands:[]}, not {operand:{}}.",
+      "Max depth 8, max 20 leaves. max_results is required.",
+    ].join(" "),
+    parameters: Type.Object({
+      expr: Type.Any({ description: "Frontmatter predicate tree." }),
+      max_results: Type.Number({ description: "Maximum number of notes to return." }),
+      fields: Type.Optional(Type.Array(Type.String(), { description: "Subset of frontmatter fields to include in results. Omit for all fields." })),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("query_frontmatter", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_settle_cache",
+    label: "Settle metadata cache",
+    description: "Call this after writing to a note and before issuing navigation queries about that note. Returns when MetadataCache has processed the write. If the cache does not update within timeoutMs milliseconds (default 5000), returns a timeout error.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Vault-relative path to the note to wait for." }),
+      timeoutMs: Type.Optional(Type.Number({ description: "Maximum milliseconds to wait (default 5000)." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("settle_cache", params, ctx);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "vault_search",
+    label: "Full-text search",
+    description: [
+      "Lexical (substring or regex) search over vault note content.",
+      "max_results is REQUIRED — unbounded calls are rejected.",
+      "Returns a SearchResult; if timedOut is true, results are partial — narrow the query or increase timeoutMs to get more.",
+      "Pagination: pass the nextCursor from a previous response to continue scanning from where the last call left off.",
+    ].join(" "),
+    parameters: Type.Object({
+      query: Type.String({ description: "Search string or regex pattern." }),
+      max_results: Type.Number({ description: "Maximum number of matches to return. Required." }),
+      isRegex: Type.Optional(Type.Boolean({ description: "Treat query as a regex. Defaults to false." })),
+      fields: Type.Optional(Type.Array(
+        Type.Union([
+          Type.Literal("body"),
+          Type.Literal("headings"),
+          Type.Literal("frontmatter"),
+          Type.Literal("code_blocks"),
+          Type.Literal("path"),
+        ]),
+        { description: "Which fields to search. Defaults to [\"body\", \"headings\"]." },
+      )),
+      glob: Type.Optional(Type.String({ description: "Glob pattern to restrict which notes are scanned (e.g. \"projects/**\")." })),
+      sort: Type.Optional(Type.Union([
+        Type.Literal("mtime_desc"),
+        Type.Literal("mtime_asc"),
+        Type.Literal("link_count_desc"),
+        Type.Literal("path_asc"),
+      ], { description: "Sort order for the candidate file list before scanning. Defaults to mtime_desc." })),
+      contextLines: Type.Optional(Type.Number({ description: "Lines of surrounding context per match (default 2, max 10)." })),
+      timeoutMs: Type.Optional(Type.Number({ description: "Scan timeout in milliseconds (default 5000, max 30000)." })),
+      cursor: Type.Optional(Type.String({ description: "Pagination cursor from a previous call." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await queryPlugin("search", params, ctx);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   });

@@ -169,6 +169,7 @@ class PiChatView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.navigationService.destroy();
     this.killPi();
     if (this.stashSweepTimer !== null) {
       clearInterval(this.stashSweepTimer);

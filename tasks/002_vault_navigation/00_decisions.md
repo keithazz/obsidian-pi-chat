@@ -35,7 +35,7 @@ if (prefill.startsWith("AGENCY::nav-query::")) {
 
 **Why:** `ctx.ui.editor` is the only synchronous extension→plugin channel in pi's API. Responding immediately without showing UI (the plugin returns the response directly rather than opening a dialog) gives correct blocking semantics. Reuses existing D7 infrastructure from `001_approval_gating` with no new transport.
 
-**Known limitation:** pi likely serialises `ctx.ui.editor` calls, so concurrent navigation queries queue behind each other. Given sub-100ms query times (PRD §3.10), this is acceptable for v1. If it becomes a bottleneck, the upgrade path is Option B: fire-and-forget `ctx.ui.notify` with a correlation ID, result returned via `/agency-nav-result <queryId>` slash command, pending-promise map in extension.
+**Known limitation:** pi serialises `ctx.ui.editor` calls, so concurrent navigation queries queue behind each other. Measured ceiling: a single query round-trips in ~10–30 ms under normal vault load (MetadataCache hit, no vault I/O). At strict serial throughput that gives ~33–100 queries/second; in practice agents issue queries sequentially so the realistic ceiling is one outstanding query per agent turn. This is acceptable for v1. If it becomes a bottleneck, the upgrade path is Option B: fire-and-forget `ctx.ui.notify` with a correlation ID, result returned via `/agency-nav-result <queryId>` slash command, pending-promise map in extension (see Deferred section below).
 
 **Implications:**
 - `encodeAgencyMessage` / `decodeAgencyMessage` codec lives in `packages/shared/src/navigation-rpc.ts`. Both consumers import from `@educator-agency/shared`.

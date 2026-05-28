@@ -1,7 +1,7 @@
 import { App, TFile, TFolder } from "obsidian";
 import type { NavOp } from "@educator-agency/shared";
 import { NavError } from "./errors";
-import type { BlockRef, BlockReadResult, EdgeType, FileMetadata, FolderEntry, FrontmatterInclude, GraphNode, GraphTraverseResult, HeadingNode, HeadingSearchHit, LinkDirection, LinkEntry, LinkType, LinesReadResult, NoteFileMetadata, NoteReadResult, NoteTagResult, PagedResult, SectionReadResult, TagEntry, TagExpr, TagSource, UnresolvedTarget } from "./types";
+import type { BlockRef, BlockReadResult, EdgeType, FileMetadata, FmExpr, FmQueryHit, FmScalar, FmValue, FolderEntry, FrontmatterInclude, FrontmatterResult, GraphNode, GraphTraverseResult, HeadingNode, HeadingSearchHit, LinkDirection, LinkEntry, LinkType, LinesReadResult, NavResultMeta, NoteFileMetadata, NoteReadResult, NoteTagResult, PagedResult, SearchField, SearchMatch, SearchResult, SearchSort, SectionReadResult, TagEntry, TagExpr, TagSource, UnresolvedTarget } from "./types";
 
 interface FileMetadataParams { path: string }
 
@@ -107,6 +107,29 @@ interface QueryTagsParams {
   cursor?: string;
 }
 
+interface FrontmatterGetParams {
+  path: string;
+}
+
+interface QueryFrontmatterParams {
+  expr: FmExpr;
+  fields?: string[];
+  max_results: number;
+  cursor?: string;
+}
+
+interface SearchParams {
+  query: string;
+  isRegex?: boolean;
+  fields?: SearchField[];
+  glob?: string;
+  sort?: SearchSort;
+  contextLines?: number;
+  timeoutMs?: number;
+  max_results: number;
+  cursor?: string;
+}
+
 function globToRegex(pattern: string): RegExp {
   let re = "";
   let i = 0;
@@ -164,7 +187,25 @@ function fileMetadataFromTFile(file: TFile): FileMetadata {
 }
 
 export class NavigationService {
-  constructor(private app: App) {}
+  private lastChanged = new Map<string, number>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private cacheChangeHandler: (...data: any[]) => any;
+
+  constructor(private app: App) {
+    this.cacheChangeHandler = (file: TFile) => {
+      this.lastChanged.set(file.path, Date.now());
+    };
+    this.app.metadataCache.on("changed", this.cacheChangeHandler);
+  }
+
+  destroy(): void {
+    this.app.metadataCache.off("changed", this.cacheChangeHandler);
+  }
+
+  private cacheAgeFor(path: string): number | undefined {
+    const t = this.lastChanged.get(path);
+    return t !== undefined ? Date.now() - t : undefined;
+  }
 
   async execute(op: NavOp, params: unknown): Promise<unknown> {
     switch (op) {
@@ -185,12 +226,16 @@ export class NavigationService {
       case "graph_traverse":   return this.graphTraverse(params as GraphTraverseParams);
       case "list_tags":        return this.listTags(params as ListTagsParams);
       case "notes_by_tag":     return this.notesByTag(params as NotesByTagParams);
-      case "query_tags":       return this.queryTags(params as QueryTagsParams);
+      case "query_tags":        return this.queryTags(params as QueryTagsParams);
+      case "frontmatter_get":   return this.frontmatterGet(params as FrontmatterGetParams);
+      case "query_frontmatter": return this.queryFrontmatter(params as QueryFrontmatterParams);
+      case "search":            return this.search(params as SearchParams);
+      case "settle_cache":      return this.settleCache(params as { path: string; timeoutMs?: number });
       default: throw new NavError("invalid_query", `Unknown op: ${op}`);
     }
   }
 
-  private fileMetadata(params: FileMetadataParams): FileMetadata {
+  private fileMetadata(params: FileMetadataParams): FileMetadata & NavResultMeta {
     const { path } = params;
     if (!path) throw new NavError("invalid_query", "Missing path parameter");
 
@@ -200,7 +245,7 @@ export class NavigationService {
       throw new NavError("invalid_query", `Path is a folder, not a file: ${path}`);
     }
 
-    return fileMetadataFromTFile(file);
+    return { ...fileMetadataFromTFile(file), cacheAge: this.cacheAgeFor(path) };
   }
 
   private folderList(params: FolderListParams): PagedResult<FolderEntry> {
@@ -318,7 +363,7 @@ export class NavigationService {
     };
   }
 
-  private async headingOutline(params: HeadingOutlineParams): Promise<{ path: string; outline: HeadingNode[] }> {
+  private async headingOutline(params: HeadingOutlineParams): Promise<{ path: string; outline: HeadingNode[]; cacheAge?: number }> {
     const { path } = params;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) throw new NavError("not_found", `File not found: ${path}`);
@@ -361,7 +406,7 @@ export class NavigationService {
       stack.push(node);
     }
 
-    return { path, outline: roots };
+    return { path, outline: roots, cacheAge: this.cacheAgeFor(path) };
   }
 
   private async blockResolve(params: BlockResolveParams): Promise<{ path: string; blocks: BlockRef[] }> {
@@ -442,6 +487,7 @@ export class NavigationService {
       content: body,
       ...(fm !== "omit" && frontmatterValue !== undefined ? { frontmatter: frontmatterValue } : {}),
       lineCount: lines.length,
+      cacheAge: this.cacheAgeFor(path),
     };
   }
 
@@ -466,7 +512,7 @@ export class NavigationService {
     const lines = (await this.app.vault.read(file)).split("\n");
     const content = lines.slice(node.line, node.endLine + 1).join("\n");
 
-    return { path, heading: node.text, startLine: node.line, endLine: node.endLine, content };
+    return { path, heading: node.text, startLine: node.line, endLine: node.endLine, content, cacheAge: this.cacheAgeFor(path) };
   }
 
   private async blockRead(params: BlockReadParams): Promise<BlockReadResult> {
@@ -496,6 +542,7 @@ export class NavigationService {
       blockId,
       content: lines.slice(paraStart, paraEnd + 1).join("\n"),
       headingContext: blockRef.headingContext,
+      cacheAge: this.cacheAgeFor(path),
     };
   }
 
@@ -511,7 +558,7 @@ export class NavigationService {
     const lines = (await this.app.vault.read(file)).split("\n");
     const content = lines.slice(startLine, endLine + 1).join("\n");
 
-    return { path, startLine, endLine, content };
+    return { path, startLine, endLine, content, cacheAge: this.cacheAgeFor(path) };
   }
 
   private static normaliseTag(tag: string): string {
@@ -537,6 +584,7 @@ export class NavigationService {
 
   private listTags(params: ListTagsParams): PagedResult<TagEntry> {
     const { prefix, max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
     const normPrefix = prefix ? NavigationService.normaliseTag(prefix) : undefined;
 
     const tagMap = new Map<string, { instances: number; notes: Set<string> }>();
@@ -583,6 +631,7 @@ export class NavigationService {
 
   private notesByTag(params: NotesByTagParams): PagedResult<NoteTagResult> {
     const { tag, match = "prefix", source, max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
     const normTag = NavigationService.normaliseTag(tag);
 
     const matchesTag = (t: string) =>
@@ -623,6 +672,7 @@ export class NavigationService {
 
   private queryTags(params: QueryTagsParams): PagedResult<NoteTagResult> {
     const { expr, max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
 
     const leafCount = { count: 0 };
     NavigationService.validateTagExpr(expr, 0, leafCount);
@@ -695,6 +745,7 @@ export class NavigationService {
 
   private backlinks(params: BacklinksParams): PagedResult<LinkEntry> {
     const { path, types, max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
 
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) throw new NavError("not_found", `File not found: ${path}`);
@@ -735,6 +786,7 @@ export class NavigationService {
 
   private forwardLinks(params: ForwardLinksParams): PagedResult<LinkEntry> {
     const { path, types, includeUnresolved = true, max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
 
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) throw new NavError("not_found", `File not found: ${path}`);
@@ -778,6 +830,7 @@ export class NavigationService {
 
   private unresolvedLinks(params: UnresolvedLinksParams): PagedResult<UnresolvedTarget> {
     const { max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
 
     const unresolvedLinksMap = this.app.metadataCache.unresolvedLinks;
     const targetMap = new Map<string, Array<{ path: string; line: number; type: LinkType }>>();
@@ -948,8 +1001,256 @@ export class NavigationService {
     };
   }
 
+  private frontmatterGet(params: FrontmatterGetParams): FrontmatterResult {
+    const { path } = params;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!file || !(file instanceof TFile)) throw new NavError("not_found", `File not found: ${path}`);
+
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+    // Strip Obsidian internal keys
+    const fields: Record<string, FmValue> = {};
+    for (const [k, v] of Object.entries(fm)) {
+      if (k === "position") continue;
+      fields[k] = v as FmValue;
+    }
+    return { path, fields, cacheAge: this.cacheAgeFor(path) };
+  }
+
+  private queryFrontmatter(params: QueryFrontmatterParams): PagedResult<FmQueryHit> {
+    const { expr, fields, max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
+
+    const leafCount = { count: 0 };
+    NavigationService.validateFmExpr(expr, 0, leafCount);
+
+    const results: FmQueryHit[] = [];
+
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const raw = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+      const fm: Record<string, FmValue> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (k === "position") continue;
+        fm[k] = v as FmValue;
+      }
+
+      if (!NavigationService.evalFmExpr(expr, fm)) continue;
+
+      const hitFields: Record<string, FmValue> = fields
+        ? Object.fromEntries(fields.filter((f) => f in fm).map((f) => [f, fm[f]]))
+        : fm;
+
+      results.push({ path: file.path, fields: hitFields, modified: file.stat.mtime });
+    }
+
+    results.sort((a, b) => b.modified - a.modified);
+
+    const total = results.length;
+    const offset = decodeCursor(cursor);
+    const page = results.slice(offset, offset + max_results);
+    const nextOffset = offset + max_results;
+    const truncated = nextOffset < total;
+
+    return { items: page, total, truncated, nextCursor: truncated ? encodeCursor(nextOffset) : undefined };
+  }
+
+  private static validateFmExpr(expr: FmExpr, depth: number, leafCount: { count: number }): void {
+    if (depth > 8) throw new NavError("invalid_query", "Frontmatter expression exceeds maximum depth of 8");
+    if (expr.op === "and" || expr.op === "or") {
+      for (const operand of expr.operands) NavigationService.validateFmExpr(operand, depth + 1, leafCount);
+    } else if (expr.op === "not") {
+      NavigationService.validateFmExpr(expr.operand, depth + 1, leafCount);
+    } else {
+      leafCount.count++;
+      if (leafCount.count > 20) throw new NavError("invalid_query", "Frontmatter expression exceeds maximum of 20 leaf nodes");
+      if (expr.op === "regex") {
+        try { new RegExp(expr.pattern); } catch {
+          throw new NavError("invalid_query", `Invalid regex pattern: ${expr.pattern}`);
+        }
+      }
+    }
+  }
+
+  private static evalFmExpr(expr: FmExpr, fm: Record<string, FmValue>): boolean {
+    switch (expr.op) {
+      case "and": return expr.operands.every((e: FmExpr) => NavigationService.evalFmExpr(e, fm));
+      case "or":  return expr.operands.some((e: FmExpr) => NavigationService.evalFmExpr(e, fm));
+      case "not": return !NavigationService.evalFmExpr(expr.operand, fm);
+      case "exists": return expr.field in fm;
+      case "eq":  return fm[expr.field] === expr.value;
+      case "neq": return fm[expr.field] !== expr.value;
+      case "gt":  return typeof fm[expr.field] === "number" && (fm[expr.field] as number) > expr.value;
+      case "gte": return typeof fm[expr.field] === "number" && (fm[expr.field] as number) >= expr.value;
+      case "lt":  return typeof fm[expr.field] === "number" && (fm[expr.field] as number) < expr.value;
+      case "lte": return typeof fm[expr.field] === "number" && (fm[expr.field] as number) <= expr.value;
+      case "in":  return expr.values.includes(fm[expr.field] as FmScalar);
+      case "contains": {
+        const fv = fm[expr.field];
+        if (Array.isArray(fv)) return fv.includes(expr.value);
+        if (typeof fv === "string" && typeof expr.value === "string") return fv.includes(expr.value);
+        return false;
+      }
+      case "contains_all": {
+        const fv = fm[expr.field];
+        if (!Array.isArray(fv)) return false;
+        return expr.values.every((v: FmScalar) => fv.includes(v));
+      }
+      case "intersects": {
+        const fv = fm[expr.field];
+        if (!Array.isArray(fv)) return false;
+        return expr.values.some((v: FmScalar) => fv.includes(v));
+      }
+      case "regex": {
+        const fv = fm[expr.field];
+        return new RegExp(expr.pattern).test(String(fv));
+      }
+      default: return false;
+    }
+  }
+
+  private async search(params: SearchParams): Promise<SearchResult> {
+    const {
+      query,
+      isRegex = false,
+      fields = ["body", "headings"],
+      glob,
+      sort = "mtime_desc",
+      contextLines = 2,
+      timeoutMs = 5000,
+      max_results,
+      cursor,
+    } = params;
+
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
+
+    const clampedContext = Math.min(contextLines, 10);
+    const clampedTimeout = Math.min(timeoutMs, 30000);
+
+    let pattern: RegExp | null = null;
+    if (isRegex) {
+      try {
+        pattern = new RegExp(query, "gm");
+      } catch {
+        throw new NavError("invalid_query", `Invalid regex: ${query}`);
+      }
+    }
+
+    const resolvedLinks = this.app.metadataCache.resolvedLinks;
+    const inboundCounts = new Map<string, number>();
+    for (const targets of Object.values(resolvedLinks)) {
+      for (const target of Object.keys(targets)) {
+        inboundCounts.set(target, (inboundCounts.get(target) ?? 0) + 1);
+      }
+    }
+
+    let files = this.app.vault.getMarkdownFiles();
+
+    if (glob) {
+      const re = globToRegex(glob);
+      files = files.filter((f) => re.test(f.path));
+    }
+
+    switch (sort) {
+      case "mtime_asc":       files.sort((a, b) => a.stat.mtime - b.stat.mtime); break;
+      case "link_count_desc": files.sort((a, b) => (inboundCounts.get(b.path) ?? 0) - (inboundCounts.get(a.path) ?? 0)); break;
+      case "path_asc":        files.sort((a, b) => a.path.localeCompare(b.path)); break;
+      default:                files.sort((a, b) => b.stat.mtime - a.stat.mtime);
+    }
+
+    const offset = decodeCursor(cursor);
+    const candidates = files.slice(offset);
+
+    const hits: SearchMatch[] = [];
+    let truncated = false;
+    let timedOut = false;
+    const startTime = Date.now();
+    let fileIdx = 0;
+
+    const matchesQuery = (text: string): boolean =>
+      pattern ? pattern.test(text) : text.includes(query);
+
+    const resetPattern = () => { if (pattern) pattern.lastIndex = 0; };
+
+    for (const file of candidates) {
+      if (Date.now() - startTime > clampedTimeout) {
+        timedOut = true;
+        break;
+      }
+
+      if (fields.includes("path")) {
+        resetPattern();
+        if (matchesQuery(file.path)) {
+          hits.push({ notePath: file.path, line: 0, field: "path", matchedText: file.path, contextBefore: "", contextAfter: "" });
+          if (hits.length >= max_results) { truncated = true; break; }
+        }
+        if (!fields.some((f) => f !== "path")) { fileIdx++; continue; }
+      }
+
+      const content = await this.app.vault.read(file);
+      const lines = content.split("\n");
+
+      let inFrontmatter = false;
+      let frontmatterClosed = false;
+      let inCodeBlock = false;
+
+      const classifyLine = (i: number): SearchField[] => {
+        const line = lines[i];
+        if (i === 0 && line === "---") { inFrontmatter = true; return []; }
+        if (inFrontmatter && !frontmatterClosed) {
+          if (line === "---") { frontmatterClosed = true; inFrontmatter = false; }
+          return ["frontmatter"];
+        }
+        if (/^```/.test(line)) { inCodeBlock = !inCodeBlock; return []; }
+        if (inCodeBlock) return ["code_blocks"];
+        if (/^#{1,6} /.test(line)) return ["headings"];
+        return ["body"];
+      };
+
+      // Reset stateful vars for each file
+      inFrontmatter = false;
+      frontmatterClosed = false;
+      inCodeBlock = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const lineFields = classifyLine(i);
+        const activeFields = lineFields.filter((f) => fields.includes(f));
+        if (activeFields.length === 0) continue;
+
+        resetPattern();
+        if (!matchesQuery(lines[i])) continue;
+
+        const field = activeFields[0];
+        const before = lines.slice(Math.max(0, i - clampedContext), i).join("\n");
+        const after  = lines.slice(i + 1, i + 1 + clampedContext).join("\n");
+
+        hits.push({
+          notePath: file.path,
+          line: i,
+          field,
+          matchedText: lines[i],
+          contextBefore: before,
+          contextAfter: after,
+        });
+
+        if (hits.length >= max_results) { truncated = true; break; }
+      }
+
+      if (truncated) break;
+      fileIdx++;
+    }
+
+    const hasMore = !timedOut && !truncated && (offset + fileIdx) < files.length;
+
+    return {
+      items: hits,
+      truncated,
+      timedOut,
+      ...(hasMore ? { nextCursor: encodeCursor(offset + fileIdx) } : {}),
+    };
+  }
+
   private headingSearch(params: HeadingSearchParams): PagedResult<HeadingSearchHit> {
     const { query, matchType = "substring", max_results, cursor } = params;
+    if (max_results == null) throw new NavError("invalid_query", "max_results is required");
 
     let matcher: (text: string) => boolean;
     if (matchType === "exact") {
@@ -995,5 +1296,27 @@ export class NavigationService {
       truncated,
       nextCursor: truncated ? encodeCursor(nextOffset) : undefined,
     };
+  }
+
+  async settleCache({ path, timeoutMs = 5000 }: { path: string; timeoutMs?: number }): Promise<{ path: string; settledAt: number }> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!file) throw new NavError("not_found", `No file at path: ${path}`);
+
+    return new Promise<{ path: string; settledAt: number }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.app.metadataCache.off("changed", handler);
+        reject(new NavError("timeout", `Cache did not update for ${path} within ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const handler: (...data: any[]) => any = (changedFile: TFile) => {
+        if (changedFile.path === path) {
+          clearTimeout(timer);
+          this.app.metadataCache.off("changed", handler);
+          resolve({ path, settledAt: Date.now() });
+        }
+      };
+      this.app.metadataCache.on("changed", handler);
+    });
   }
 }
