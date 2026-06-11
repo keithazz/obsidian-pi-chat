@@ -10,6 +10,22 @@ This repository uses a two-phase, Claude-driven workflow:
 
 Read this whole file before doing either.
 
+## Project orientation (read before substantive work)
+
+This file holds the cross-phase *workflow* rules. Project-specific orientation lives in
+`docs/`:
+
+- [`docs/reference/conventions.md`](docs/reference/conventions.md) — package ownership,
+  load-bearing invariants, coding conventions, and the verification tier. **Start here.**
+- [`docs/reference/architecture.md`](docs/reference/architecture.md) — full technical
+  architecture (cite its section numbers in commits/PRs, e.g. `architecture.md §4.1`).
+- [`docs/product/`](docs/product/) — product intent (requirements, non-goals).
+- [`docs/reference/navigation-api.md`](docs/reference/navigation-api.md) — navigation tool
+  surface (draft).
+
+If a request conflicts with product or architecture docs, stop and surface the conflict
+rather than silently deviating.
+
 ---
 
 ## The single most important rule: one session = one PR
@@ -29,11 +45,16 @@ only** (see `environment/setup.sh`). That is the deliberate ceiling — the sand
 provisioned with databases, queues, browsers, or running services, and you should not try
 to stand them up.
 
+**This repo currently has no unit-test runner.** The verification ceiling is the
+type-checking build — `npm run build` (tsc for `shared`, esbuild for `plugin`). Treat that
+as the "unit" tier until a test runner is added. See
+[`docs/reference/conventions.md`](docs/reference/conventions.md) § Verification tier.
+
 Before opening a PR you must:
 
-- Run the project's linter/formatter and type checks, and the **unit** test suite.
-- Make those pass for the code you changed. If you cannot, say so in the PR rather than
-  disabling checks or weakening tests to force a pass.
+- Run `npm run build` and make it pass for the code you changed. If a test runner exists by
+  then, run it too. If you cannot make checks pass, say so in the PR rather than disabling
+  checks or weakening tests to force a pass.
 
 Anything that cannot be verified at this tier — integration against real services, E2E
 flows, manual UI inspection, migrations against real data, performance — is **out of
@@ -92,21 +113,24 @@ Documentation lives in `docs/` and is split by **mutability**:
 
 ## Task file conventions
 
-- A **simple task** is a single self-contained `tasks/NNN-slug.md`.
-- A **complex task** is a folder `tasks/NNN-slug/` containing a `README.md` index plus
-  `NN-subtask-slug.md` files. The README states subtask order and dependencies and
-  holds shared context.
-- When implementing a complex task, **read its `README.md` first**, follow the stated
-  order, and respect any subtask marked `HARD DEP:` before its dependents.
+This repo uses **underscore** separators (`NNN_slug`), not hyphens.
+
+- A **simple task** is a single self-contained `tasks/NNN_slug.md`.
+- A **complex task** is a folder `tasks/NNN_slug/` containing a `README.md` index, an
+  optional `00_decisions.md` (read it first when present — it records the transport/codec/
+  naming decisions the subtasks cite), plus `NN_subtask_slug.md` files. The README states
+  subtask order and dependencies and holds shared context.
+- When implementing a complex task, **read its `README.md` (and `00_decisions.md`) first**,
+  follow the stated order, and respect any subtask marked `HARD DEP:` before its dependents.
 - When assigned a single subtask in isolation, treat the parent folder's `README.md`
   `Goal` and `Shared context` as your intent even though you're only doing one piece.
 
 ## Launch vocabulary the maintainer uses (for your interpretation)
 
-- `Implement tasks/001-foo.md. Open one PR.` → one simple task.
-- `Implement all of tasks/002-bar/ following its README order. One PR.` → whole complex
+- `Implement tasks/001_foo.md. Open one PR.` → one simple task.
+- `Implement all of tasks/002_bar/ following its README order. One PR.` → whole complex
   task.
-- `In this one session, implement tasks/001-foo.md and all of tasks/002-bar/. Single
+- `In this one session, implement tasks/001_foo.md and all of tasks/002_bar/. Single
   PR covering everything.` → deliberate bundle, one PR.
 
 "One PR" is always implied by the session even when unstated.

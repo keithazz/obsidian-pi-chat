@@ -17,34 +17,23 @@ set -euo pipefail
 echo "==> Provisioning lightweight sandbox (lint + unit tests only)"
 
 # ---------------------------------------------------------------------------
-# Node / frontend (e.g. Next.js, Vitest)
+# Node / TypeScript monorepo (npm workspaces: plugin, agency, shared)
+# Lockfile is package-lock.json → use `npm ci` for a deterministic install.
 # ---------------------------------------------------------------------------
-# if [ -f package.json ] && [ ! -d node_modules ]; then
-#   echo "==> Installing JS dependencies"
-#   npm ci            # or: pnpm install --frozen-lockfile / yarn install --immutable
-# fi
+if [ -f package.json ] && [ ! -d node_modules ]; then
+  echo "==> Installing JS dependencies (npm ci)"
+  npm ci
+fi
 
 # ---------------------------------------------------------------------------
-# Python / backend (e.g. FastAPI, pytest)
+# Sanity check: confirm the type-checking build is callable so a session doesn't
+# discover a missing toolchain mid-task. Do NOT run a full build/test here.
+#
+# NOTE: this repo has NO unit-test runner yet. The verification ceiling is the
+# type-checking build — `npm run build` (tsc for shared, esbuild for plugin).
+# Everything touching plugin runtime behaviour requires Obsidian and is handed to
+# the reviewer via each PR's "Manual testing required" section.
 # ---------------------------------------------------------------------------
-# if [ -f pyproject.toml ]; then
-#   echo "==> Installing Python dependencies"
-#   command -v uv >/dev/null 2>&1 || pip install --quiet uv
-#   uv sync --frozen   # or: pip install -e ".[dev]" / poetry install --no-root
-# fi
-
-# ---------------------------------------------------------------------------
-# System packages needed for BUILDING/LINTING only (not runtime services).
-# Keep this minimal — if you find yourself installing a database here, that's a
-# signal the work needs manual verification rather than sandbox verification.
-# ---------------------------------------------------------------------------
-# sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends <pkg>
-
-# ---------------------------------------------------------------------------
-# Sanity check (optional): confirm the unit-test tooling is callable so a session
-# doesn't discover a missing toolchain mid-task. Do NOT run the full suite here.
-# ---------------------------------------------------------------------------
-# npx vitest --version >/dev/null 2>&1 || echo "WARN: vitest not available"
-# uv run pytest --version >/dev/null 2>&1 || echo "WARN: pytest not available"
+npx tsc --version >/dev/null 2>&1 || echo "WARN: typescript (tsc) not available"
 
 echo "==> Sandbox provisioning complete"

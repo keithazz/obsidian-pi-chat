@@ -9,12 +9,15 @@ A paragraph stating the feature's intent and the problem it solves. **This is th
 intent every subtask inherits** — when a subtask is assigned alone, the implementer reads
 this to understand the bigger picture.
 
+> If this folder records cross-cutting decisions, capture them in `00_decisions.md` and
+> have the subtasks cite it. Read it first when present.
+
 ## Subtasks (execute in order)
 
-- [ ] `01-<slug>.md` — <one line> — deps: none
-- [ ] `02-<slug>.md` — <one line> — HARD DEP: 01
-- [ ] `03-<slug>.md` — <one line> — HARD DEP: 01
-- [ ] `04-<slug>.md` — <one line> — soft dep: 03
+- [ ] `01_<slug>.md` — <one line> — deps: none
+- [ ] `02_<slug>.md` — <one line> — HARD DEP: 01
+- [ ] `03_<slug>.md` — <one line> — HARD DEP: 01
+- [ ] `04_<slug>.md` — <one line> — soft dep: 03
 
 > `HARD DEP: NN` means the dependency must be fully complete before this subtask starts —
 > if implementing the whole folder in one session, sequence accordingly; if a hard

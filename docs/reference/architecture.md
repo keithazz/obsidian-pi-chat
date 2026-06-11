@@ -1,6 +1,8 @@
 # ARCHITECTURE — Educator Agency
 
-> Detailed technical architecture for the system described in [PRD/01-basic-requirements.md](./PRD/01-basic-requirements.md). For the work plan, see [PLAN.md](./PLAN.md). Intended for contributors and integrators.
+> Detailed technical architecture for the system described in [product/01-basic-requirements.md](../product/01-basic-requirements.md). Intended for contributors and integrators.
+>
+> **Reference doc — must track the code.** This describes the *target* architecture and current shape of the system. Architectural *decisions* (and changes to them) are recorded as append-only ADRs under [`docs/adr/`](../adr/); when a decision here changes, add an ADR rather than rewriting history silently. The §10 accepted tradeoffs and §11 open questions below are the natural seeds for future ADRs.
 
 ## 1. Overview
 

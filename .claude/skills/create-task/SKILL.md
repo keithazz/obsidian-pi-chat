@@ -40,27 +40,30 @@ The simple/complex split and the eventual review bundling are the maintainer's c
 not yours.
 
 Classification guidance:
-- **Simple** (single `tasks/NNN-slug.md`): a bounded change — bug fix, small enhancement,
+- **Simple** (single `tasks/NNN_slug.md`): a bounded change — bug fix, small enhancement,
   one isolated unit of work that a reviewer can hold in their head as one diff.
-- **Complex** (`tasks/NNN-slug/` folder + `README.md` + subtasks): a feature, refactor,
+- **Complex** (`tasks/NNN_slug/` folder + `README.md` + subtasks): a feature, refactor,
   or anything where subtasks have ordering or dependencies, or where the work is large
   enough that subtasks might be assigned individually.
 
 ## Step 2 — Number tasks
 
-Scan `tasks/` for the highest existing `NNN` prefix and continue from there. Use a
-three-digit zero-padded prefix and a short kebab-case slug (`tasks/003-search-revamp/`).
-Subtasks inside a folder use a two-digit prefix (`01-define-schema.md`).
+Scan `tasks/` for the highest existing `NNN` prefix and continue from there. This repo uses
+**underscore** separators: a three-digit zero-padded prefix and a short snake_case slug
+(`tasks/003_search_revamp/`). Subtasks inside a folder use a two-digit prefix
+(`01_define_schema.md`).
 
 ## Step 3 — Scaffold from templates
 
 Only after sign-off, create files:
 
-- Simple task → copy `tasks/_TEMPLATE-simple.md` → `tasks/NNN-slug.md`, fill it in.
-- Complex task → create `tasks/NNN-slug/`, then:
+- Simple task → copy `tasks/_TEMPLATE-simple.md` → `tasks/NNN_slug.md`, fill it in.
+- Complex task → create `tasks/NNN_slug/`, then:
   - `README.md` from `tasks/_TEMPLATE-complex-README.md` (fill Goal, Shared context, and
     the ordered subtask checklist with dependency annotations).
-  - one `NN-subtask-slug.md` per subtask from `tasks/_TEMPLATE-subtask.md`.
+  - `00_decisions.md` when the folder has cross-cutting decisions (transport, codec,
+    naming, vault-write stance, etc.) the subtasks should cite — read first by implementers.
+  - one `NN_subtask_slug.md` per subtask from `tasks/_TEMPLATE-subtask.md`.
 
 Fill files completely enough that an execution session with **no memory of this
 conversation** could implement them. Every task file must restate enough intent to stand

@@ -1,7 +1,8 @@
 # NNN/NN — <subtask title>
 
-> Part of `tasks/NNN-<slug>/`. Read that folder's `README.md` (Goal + Shared context)
-> first — this subtask may be assigned on its own, and that README is your intent.
+> Part of `tasks/NNN_<slug>/`. Read that folder's `README.md` (Goal + Shared context) and
+> `00_decisions.md` (if present) first — this subtask may be assigned on its own, and those
+> are your intent.
 
 ## Parent goal (restated)
 
