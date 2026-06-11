@@ -1,97 +1,87 @@
-# Educator Agency
+# Claude-driven PLAN/EXECUTE workflow
 
-Monorepo for the Educator Agency — a multi-agent co-creation tool for educators
-built on Obsidian and the [pi](https://github.com/earendil-works/pi) coding
-agent runtime.
+A minimal, subscription-only (no API key) workflow for planning work interactively and
+executing it — interactively or AFK in sandboxed Claude Code web sessions — with a strict
+**one-session-one-PR** review model.
 
-For the product vision and architectural detail, see
-[docs/PRD/01-basic-requirements.md](docs/PRD/01-basic-requirements.md) and [docs/ADR/01-basic-architecture.md](docs/ADR/01-basic-architecture.md).
+## The two phases
 
-## Packages
+**PLAN** (interactive, desktop/CLI, where you converse):
+1. `grill-with-docs` — interrogate a feature against existing docs, surface gaps, flag
+   documentation that needs updating. Produces a decided/undecided/docs-to-update summary.
+2. `create-task` — break the discussed work into **simple** (single MD file) and
+   **complex** (folder + README index + subtasks) tasks. Proposes a high-level breakdown
+   for your sign-off, then writes MD files you review manually.
 
-| Package | Purpose |
-|---|---|
-| [`packages/plugin`](packages/plugin) | Obsidian community plugin — UI shell that spawns pi in RPC mode and renders the agency. |
-| [`packages/agency`](packages/agency) | Vault-installable artifact: the `agency-control` pi extension, default skills, `PEDAGOGY.md`, `style.css`. |
-| [`packages/shared`](packages/shared) | TypeScript types for the custom RPC vocabulary that rides on top of pi's protocol. |
+**EXECUTE** (interactive *or* AFK sandboxed web session):
+- You launch a session from the Claude app pointed at the repo and tell it which task(s)
+  to implement. The session works on one branch and opens **one PR** for your review.
+- Because a session is the PR boundary, *you* decide review granularity by choosing what
+  goes in the prompt — Claude never splits PRs on its own.
 
-These three are co-versioned because a schema change in any one of them is a
-coordinated change across all three.
+## Launch vocabulary (EXECUTE)
 
-## Prerequisites
+- `Implement tasks/001-foo.md. Open one PR.`
+- `Implement all of tasks/002-bar/ following its README order. One PR.`
+- `In this one session, implement tasks/001-foo.md and all of tasks/002-bar/. Single PR.`
 
-- **Node.js** ≥ 18 and **npm** ≥ 9 (for workspaces).
-- **Pi** installed and on `$PATH` (`pi --version` works in your terminal).
-- **Obsidian** desktop (the plugin uses `child_process`; mobile is out of scope).
-- Pi must be authenticated with at least one LLM provider (`pi`, then `/login`).
+## Verification tier
 
-## First-time setup
+EXECUTE runs in a **lightweight sandbox: lint + type-check + unit tests only**, provisioned
+by `environment/setup.sh`. It has no databases, queues, browsers, or running services.
+Anything beyond unit level — integration, E2E, real migrations, manual UI checks — is out
+of scope for the sandbox and is flagged for the human in each PR's `## Manual testing
+required` section. Task files carry those reviewer instructions explicitly.
 
-```sh
-npm install
-npm run build              # initial build so dist/ exists for symlinks
-npm run link-dev-vault     # creates dev-vault/ and symlinks the plugin + agency
+## Documentation model (split by mutability)
+
+- `docs/adr/` — Architecture Decision Records. **Append-only**, immutable once accepted;
+  supersede rather than edit. History has standalone value.
+- `docs/product/` — Feature intent. **Evergreen**, edited in place.
+- `docs/reference/` — Data models, API contracts, conventions. **Evergreen and must track
+  code**; updated during EXECUTE in the same PR as the code.
+
+Decisions (ADRs, product docs) are authored during PLAN. Code-tracking reference updates
+happen during EXECUTE. This keeps one writer per doc per phase and prevents drift.
+
+## Installation
+
+### New repo
+Copy `CLAUDE.md`, `.claude/`, `docs/`, and `tasks/` into your repo root. Set up branch
+protection on your default branch (required PR review, no direct pushes) so EXECUTE
+sessions can only ever open a PR, never merge. Start planning with `grill-with-docs`.
+
+### Existing repo
+Copy the same files in, then run the **`bootstrap-workflow`** skill in an interactive
+session. It scans your codebase, seeds the reference/product docs from real code, and for
+every mismatch (doc layout, branch naming, existing `CLAUDE.md`, etc.) raises an explicit
+**adapt-the-workflow vs refactor-the-repo** decision for you to make — nothing is changed
+silently.
+
+## Billing note
+
+Launch EXECUTE sessions from the Claude web/mobile app while signed into your Pro/Max
+subscription. Do **not** set an `ANTHROPIC_API_KEY` anywhere or connect a Console API key
+in the GitHub authorization — that would switch billing to per-token API usage. With no
+local environment in play, the web sessions run on your subscription.
+
+## Layout
+
 ```
-
-This creates a self-contained dev vault at `./dev-vault/` (gitignored). Open
-that folder as a vault in Obsidian, then:
-
-1. **Settings → Community plugins → Turn on community plugins.**
-2. **Install the [Hot Reload](https://github.com/pjeby/hot-reload) plugin**
-   (one-time): clone or download it into
-   `dev-vault/.obsidian/plugins/hot-reload/` and enable it. From then on,
-   every esbuild rebuild reloads the plugin automatically.
-3. **Enable Pi Chat (POC)** in the installed-plugins list.
-
-## Dev loop
-
-```sh
-npm run dev
+CLAUDE.md                              cross-phase rules (read every session)
+.claude/skills/
+  grill-with-docs/SKILL.md             PLAN: interrogate a feature vs docs
+  create-task/SKILL.md                 PLAN: break work into task files
+  bootstrap-workflow/SKILL.md          one-time: align workflow with an existing repo
+environment/
+  setup.sh                             lightweight sandbox provisioning (lint + unit)
+  README.md
+docs/
+  adr/        _TEMPLATE.md, README     append-only decisions
+  product/    README                   evergreen feature intent
+  reference/  README                   evergreen, code-tracking
+tasks/
+  _TEMPLATE-simple.md
+  _TEMPLATE-complex-README.md
+  _TEMPLATE-subtask.md
 ```
-
-This starts:
-
-- `tsc --watch` for `packages/shared` (RPC type updates flow into both
-  consumers).
-- `esbuild --watch` for `packages/plugin` (bundles into
-  `packages/plugin/dist/`, where the symlink in the dev vault picks it up).
-
-Edits flow as:
-
-| Edit | Reload path |
-|---|---|
-| `packages/plugin/src/**` | esbuild rebuilds → Hot Reload reloads the plugin in Obsidian. |
-| `packages/agency/skills/**` (markdown) | Picked up by pi on next skill activation. No restart. |
-| `packages/agency/extensions/agency-control.ts` | Requires pi restart. Use the plugin's "Restart pi" command (todo) or reopen the chat view. |
-| `packages/shared/src/**` | `tsc --watch` emits new types; the next plugin rebuild incorporates them. |
-
-## What lives outside the repo
-
-| Thing | Where it lives | Why |
-|---|---|---|
-| Test markdown notes | `dev-vault/` (gitignored) | Test data, not source. |
-| LLM API keys | `~/.pi/` (pi's auth file) | Pi's responsibility; never in repo. |
-| Pi itself | User's `$PATH` | Separate distribution channel. |
-| Your *real* vault | Your filesystem | Never touched by dev. |
-
-## Smoke test
-
-After the dev loop is running:
-
-1. Open `dev-vault/` in Obsidian.
-2. Command palette → **Open Pi Chat**.
-3. Status bar should read "Connected to Pi" after ~2 seconds.
-4. Send `List the files in the current directory.` — pi should stream a
-   response.
-
-The plugin auto-confirms `extension_ui_request` events for now (approval
-gating is a later phase). See [docs/ADR/01-basic-architecture.md](docs/ADR/01-basic-architecture.md)
-for the full target architecture.
-
-## What this does NOT yet do
-
-- No approval gating / diff view (the `agency-control` extension is a stub).
-- No skills bundled yet.
-- No history sidebar.
-- No autonomy mode switcher.
-- No settings UI.
