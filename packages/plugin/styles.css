@@ -179,6 +179,7 @@
 
 .pi-chat-working-block {
   margin-bottom: 8px;
+  align-items: center;
 }
 
 .pi-chat-working-block-details {
@@ -190,7 +191,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 100px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--text-muted) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
   color: var(--text-muted);
@@ -410,14 +411,14 @@ details[open] .pi-chat-trace-summary::before {
    Pill-shaped, accent-tinted: informational but visually distinct from the
    conversation messages around them. */
 .pi-chat-activity-card {
-  display: inline-flex;
+  display: flex;
   flex-direction: row;
   align-items: center;
   gap: 6px;
   width: fit-content;
   max-width: 100%;
   padding: 5px 12px;
-  margin-bottom: 8px;
+  margin: 0 auto 8px;
   font-size: 12px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
