@@ -121,6 +121,12 @@ class PiChatView extends ItemView {
   private currentThinkingEl: HTMLElement | null = null;
   private currentToolCallArgsEl: HTMLElement | null = null;
 
+  // Working block state — groups a contiguous run of thinking + tool-call traces
+  private currentWorkingBlockEl: HTMLElement | null = null;
+  private workingBlockSummaryEl: HTMLElement | null = null;
+  private workingBlockSpinnerEl: HTMLElement | null = null;
+  private workingBlockStepCount: number = 0;
+
   getViewType(): string { return VIEW_TYPE; }
   getDisplayText(): string { return "Pi Chat"; }
   getIcon(): string { return "message-circle"; }
@@ -525,8 +531,22 @@ class PiChatView extends ItemView {
       return;
     }
 
-    // ── Turn complete ───────────────────────────────────────────────────
-    if (type === "turn_end" || type === "agent_end" || type === "done") {
+    // ── Step boundary (one LLM round-trip) ──────────────────────────────
+    // Pi emits turn_end after EVERY agent step, not once per user prompt, so
+    // sealing here would split a contiguous run into a separate block per step.
+    // Just drop the streaming handles; the working block is sealed by real run
+    // boundaries (assistant narration, activity/proposal/question cards) or by
+    // agent_end/done below.
+    if (type === "turn_end") {
+      this.currentAssistantEl = null;
+      this.currentThinkingEl = null;
+      this.currentToolCallArgsEl = null;
+      return;
+    }
+
+    // ── Run complete ────────────────────────────────────────────────────
+    if (type === "agent_end" || type === "done") {
+      this.sealWorkingBlock();
       this.currentAssistantEl = null;
       this.currentThinkingEl = null;
       this.currentToolCallArgsEl = null;
@@ -647,6 +667,7 @@ class PiChatView extends ItemView {
   // ─── Proposal cards ──────────────────────────────────────────────────────
 
   private renderProposalCard(id: string, title: string, message: string): void {
+    this.sealWorkingBlock();
     const card = this.messagesEl.createDiv({
       cls: "pi-chat-msg pi-chat-proposal-card",
       attr: { "data-request-id": id },
@@ -697,6 +718,7 @@ class PiChatView extends ItemView {
   }
 
   private renderOptionsCard(id: string, title: string, options: string[]): void {
+    this.sealWorkingBlock();
     const card = this.messagesEl.createDiv({
       cls: "pi-chat-msg pi-chat-proposal-card",
       attr: { "data-request-id": id },
@@ -718,6 +740,7 @@ class PiChatView extends ItemView {
   }
 
   private renderInputCard(id: string, title: string, message: string, multiLine: boolean): void {
+    this.sealWorkingBlock();
     const card = this.messagesEl.createDiv({
       cls: "pi-chat-msg pi-chat-proposal-card",
       attr: { "data-request-id": id },
@@ -817,6 +840,10 @@ class PiChatView extends ItemView {
   }
 
   private renderActivityCard(edit: SessionEdit): void {
+    // An activity card marks the end of a contiguous working run (architecture
+    // §3.4): seal the open block so the card sits outside it and the next trace
+    // opens a fresh block — also keeps cards correctly interleaved in the DOM.
+    this.sealWorkingBlock();
     const hasSnapshot = edit.before !== undefined && edit.after !== undefined;
     const tooltip = hasSnapshot
       ? `Show diff for ${edit.path}`
@@ -951,6 +978,7 @@ class PiChatView extends ItemView {
     }
     this.inputEl.value = "";
     this.addUserMessage(text);
+    this.sealWorkingBlock();
     this.currentAssistantEl = null;
     this.currentThinkingEl = null;
     this.currentToolCallArgsEl = null;
@@ -966,7 +994,34 @@ class PiChatView extends ItemView {
     this.scroll();
   }
 
+  private openWorkingBlock(): void {
+    const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-working-block" });
+    const details = row.createEl("details", { cls: "pi-chat-working-block-details" });
+    const summary = details.createEl("summary", { cls: "pi-chat-working-block-summary" });
+    this.workingBlockSpinnerEl = summary.createSpan({ cls: "pi-chat-working-block-spinner" });
+    this.workingBlockSummaryEl = summary.createSpan({ cls: "pi-chat-working-block-header", text: "Working…" });
+    this.currentWorkingBlockEl = details.createDiv({ cls: "pi-chat-working-block-steps" });
+    this.workingBlockStepCount = 0;
+  }
+
+  private sealWorkingBlock(): void {
+    if (!this.currentWorkingBlockEl) return;
+    this.workingBlockSpinnerEl?.remove();
+    this.workingBlockSpinnerEl = null;
+    const n = this.workingBlockStepCount;
+    const label = n === 1 ? "Worked · 1 step" : `Worked · ${n} steps`;
+    this.workingBlockSummaryEl?.setText(label);
+    this.workingBlockSummaryEl = null;
+    this.currentWorkingBlockEl = null;
+    this.workingBlockStepCount = 0;
+  }
+
   private appendAssistantText(text: string): void {
+    // An empty content-block boundary delta must not seal the working block or
+    // spawn an invisible "Pi" bubble — that splits a contiguous run for no
+    // visible reason. Only real narration is a run boundary.
+    if (!text) return;
+    this.sealWorkingBlock();
     if (!this.currentAssistantEl) {
       const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-assistant" });
       row.createDiv({ cls: "pi-chat-label", text: "Pi" });
@@ -977,9 +1032,10 @@ class PiChatView extends ItemView {
   }
 
   private startThinkingTrace(): void {
-    const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-trace pi-chat-thinking" });
-    const details = row.createEl("details", { cls: "pi-chat-trace-details" });
-    details.setAttribute("open", "");
+    if (!this.currentWorkingBlockEl) this.openWorkingBlock();
+    this.workingBlockStepCount++;
+    this.workingBlockSummaryEl?.setText("Thinking…");
+    const details = this.currentWorkingBlockEl!.createEl("details", { cls: "pi-chat-trace-details" });
     details.createEl("summary", { cls: "pi-chat-trace-summary", text: "Thinking…" });
     this.currentThinkingEl = details.createDiv({ cls: "pi-chat-trace-content" });
     this.scroll();
@@ -997,16 +1053,16 @@ class PiChatView extends ItemView {
       if (!this.currentThinkingEl.textContent?.trim()) {
         this.currentThinkingEl.setText(content || "(encrypted reasoning)");
       }
-      this.currentThinkingEl.closest("details")?.removeAttribute("open");
     }
     this.currentThinkingEl = null;
     this.scroll();
   }
 
   private startToolCallTrace(toolName: string): void {
-    const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-trace pi-chat-toolcall" });
-    const details = row.createEl("details", { cls: "pi-chat-trace-details" });
-    details.setAttribute("open", "");
+    if (!this.currentWorkingBlockEl) this.openWorkingBlock();
+    this.workingBlockStepCount++;
+    this.workingBlockSummaryEl?.setText(`🔧 ${toolName}`);
+    const details = this.currentWorkingBlockEl!.createEl("details", { cls: "pi-chat-trace-details" });
     const summary = details.createEl("summary", { cls: "pi-chat-trace-summary" });
     summary.createSpan({ text: "🔧 " });
     summary.createSpan({ cls: "pi-chat-trace-tool-name", text: toolName });
