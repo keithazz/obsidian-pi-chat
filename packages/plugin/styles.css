@@ -170,6 +170,74 @@
   font-style: italic;
 }
 
+/* Working block — groups a contiguous run of thinking + tool-call traces into a
+   single collapsible container: spinner + live step header while streaming,
+   sealed to a "Worked · N steps" summary once the run ends. */
+@keyframes pi-chat-spin {
+  to { transform: rotate(360deg); }
+}
+
+.pi-chat-working-block {
+  margin-bottom: 4px;
+}
+
+.pi-chat-working-block-details {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pi-chat-working-block-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  outline: none;
+}
+
+.pi-chat-working-block-summary::-webkit-details-marker {
+  display: none;
+}
+
+.pi-chat-working-block-summary::before {
+  content: "▶";
+  font-size: 8px;
+  display: inline-block;
+  transition: transform 0.1s;
+  flex-shrink: 0;
+}
+
+.pi-chat-working-block-details[open] .pi-chat-working-block-summary::before {
+  transform: rotate(90deg);
+}
+
+.pi-chat-working-block-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--background-modifier-border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: pi-chat-spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+.pi-chat-working-block-header {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.pi-chat-working-block-steps {
+  padding: 4px 0 2px 14px;
+  border-left: 2px solid var(--background-modifier-border);
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 /* Thinking & tool-call traces */
 .pi-chat-trace {
   margin-bottom: 4px;
