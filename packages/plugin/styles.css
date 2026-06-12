@@ -178,46 +178,45 @@
 }
 
 .pi-chat-working-block {
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 .pi-chat-working-block-details {
   font-size: 11px;
-  color: var(--text-muted);
 }
 
 .pi-chat-working-block-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
   list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
+  font-size: 11px;
+  font-style: italic;
   outline: none;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.pi-chat-working-block-summary:hover {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
 }
 
 .pi-chat-working-block-summary::-webkit-details-marker {
   display: none;
 }
 
-.pi-chat-working-block-summary::before {
-  content: "▶";
-  font-size: 8px;
-  display: inline-block;
-  transition: transform 0.1s;
-  flex-shrink: 0;
-}
-
-.pi-chat-working-block-details[open] .pi-chat-working-block-summary::before {
-  transform: rotate(90deg);
-}
-
 .pi-chat-working-block-spinner {
   display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--background-modifier-border);
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
   border-top-color: var(--text-muted);
   border-radius: 50%;
   animation: pi-chat-spin 0.75s linear infinite;
@@ -232,7 +231,7 @@
 .pi-chat-working-block-steps {
   padding: 4px 0 2px 14px;
   border-left: 2px solid var(--background-modifier-border);
-  margin-top: 4px;
+  margin-top: 6px;
   display: flex;
   flex-direction: column;
   gap: 3px;

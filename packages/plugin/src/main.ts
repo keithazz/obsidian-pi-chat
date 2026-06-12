@@ -531,8 +531,21 @@ class PiChatView extends ItemView {
       return;
     }
 
-    // ── Turn complete ───────────────────────────────────────────────────
-    if (type === "turn_end" || type === "agent_end" || type === "done") {
+    // ── Step boundary (one LLM round-trip) ──────────────────────────────
+    // Pi emits turn_end after EVERY agent step, not once per user prompt, so
+    // sealing here would split a contiguous run into a separate block per step.
+    // Just drop the streaming handles; the working block is sealed by real run
+    // boundaries (assistant narration, activity/proposal/question cards) or by
+    // agent_end/done below.
+    if (type === "turn_end") {
+      this.currentAssistantEl = null;
+      this.currentThinkingEl = null;
+      this.currentToolCallArgsEl = null;
+      return;
+    }
+
+    // ── Run complete ────────────────────────────────────────────────────
+    if (type === "agent_end" || type === "done") {
       this.sealWorkingBlock();
       this.currentAssistantEl = null;
       this.currentThinkingEl = null;
@@ -827,6 +840,9 @@ class PiChatView extends ItemView {
   }
 
   private renderActivityCard(edit: SessionEdit): void {
+    // An activity card marks the end of a contiguous working run (architecture
+    // §3.4): seal the open block so the card sits outside it and the next trace
+    // opens a fresh block — also keeps cards correctly interleaved in the DOM.
     this.sealWorkingBlock();
     const hasSnapshot = edit.before !== undefined && edit.after !== undefined;
     const tooltip = hasSnapshot
@@ -1001,6 +1017,10 @@ class PiChatView extends ItemView {
   }
 
   private appendAssistantText(text: string): void {
+    // An empty content-block boundary delta must not seal the working block or
+    // spawn an invisible "Pi" bubble — that splits a contiguous run for no
+    // visible reason. Only real narration is a run boundary.
+    if (!text) return;
     this.sealWorkingBlock();
     if (!this.currentAssistantEl) {
       const row = this.messagesEl.createDiv({ cls: "pi-chat-msg pi-chat-assistant" });
